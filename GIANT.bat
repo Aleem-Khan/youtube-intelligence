@@ -14,17 +14,19 @@ echo    [1]  Run Discovery         find new channels for any niche
 echo    [2]  Extract Patterns      analyze title and thumbnail formulas
 echo    [3]  Open Dashboard        view all data in browser
 echo    [4]  Database Stats        see what you have collected
-echo    [5]  Exit
+echo    [5]  Push to GitHub        update live dashboard on Vercel
+echo    [6]  Exit
 echo.
 echo  ============================================================
 echo.
-set /p choice="  Enter your choice (1-5): "
+set /p choice="  Enter your choice (1-6): "
 
 if "%choice%"=="1" goto DISCOVER
 if "%choice%"=="2" goto PATTERNS
 if "%choice%"=="3" goto DASHBOARD
 if "%choice%"=="4" goto STATS
-if "%choice%"=="5" goto EXIT
+if "%choice%"=="5" goto PUSH
+if "%choice%"=="6" goto EXIT
 goto MENU
 
 
@@ -134,7 +136,6 @@ try:
     rows = c.fetchall()
     sep = '-' * 52
     print(f'  {sep}')
-    print(f'  {chr(78):<32} {chr(67):>8} {chr(71):>8}')
     print(f'  NICHE                            CHANNELS   GOLDEN')
     print(f'  {sep}')
     for r in rows:
@@ -148,6 +149,31 @@ except Exception as e:
 echo.
 echo  ============================================================
 echo  Press any key to return to menu.
+pause >nul
+goto MENU
+
+
+:PUSH
+cls
+echo.
+echo  ============================================================
+echo    PUSH TO GITHUB — Update Live Dashboard on Vercel
+echo  ============================================================
+echo.
+echo  Step 1: Regenerating dashboard...
+call venv\Scripts\activate.bat
+python viewer.py
+echo.
+echo  Step 2: Pushing to GitHub...
+git add index.html
+git commit -m "dashboard update %date% %time%"
+git push origin main
+echo.
+echo  ============================================================
+echo  Done! Your live Vercel dashboard has been updated.
+echo  Visit your Vercel URL to see the latest data.
+echo  ============================================================
+echo.
 pause >nul
 goto MENU
 

@@ -9,7 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import (
     GROQ_API_KEY, DB_FILE, GROQ_MODEL,
     RESULTS_PER_KEYWORD, PARALLEL_WORKERS,
-    GOLDEN_SCORE_MIN, MAX_SUBSCRIBERS, MIN_SUBSCRIBERS,
+    GOLDEN_SCORE_MIN, PROMISING_SCORE_MIN,
+    MAX_SUBSCRIBERS, MIN_SUBSCRIBERS,
     MAX_CHANNEL_AGE_DAYS, MAX_LAST_VIDEO_DAYS
 )
 
@@ -316,6 +317,16 @@ FACE_SIGNALS = [
     "music", "song", "dance", "travel", "food", "review", "unboxing"
 ]
 
+# News aggregator signals — reuse clips, get demonetized, no original value
+NEWS_SIGNALS = [
+    "breaking news", "news today", "latest news", "news update",
+    "daily news", "world news", "news channel", "news network",
+    "top stories", "headlines", "live news", "news report",
+    "current events", "news clips", "news highlights",
+    "political news", "election news", "news compilation",
+    "viral news", "trending news", "tv news", "cable news"
+]
+
 
 # ================================================================
 #  DATABASE
@@ -540,11 +551,26 @@ def mark_searched(conn, keyword, niche):
 #  FACELESS DETECTION
 # ================================================================
 def detect_faceless(name, desc):
-    text = (name + " " + desc).lower()
-    face_hits     = sum(1 for s in FACE_SIGNALS    if s in text)
+    text      = (name + " " + desc).lower()
+    name_text = name.lower()
+
+    # Reject news aggregator channels immediately
+    # 1 match in channel NAME alone is enough — news in name = news channel
+    name_news_hits = sum(1 for s in NEWS_SIGNALS if s in name_text)
+    if name_news_hits >= 1:
+        return False, 0
+
+    # 2 matches in full text (name + desc) = news channel
+    full_news_hits = sum(1 for s in NEWS_SIGNALS if s in text)
+    if full_news_hits >= 2:
+        return False, 0
+
+    face_hits     = sum(1 for s in FACE_SIGNALS     if s in text)
     faceless_hits = sum(1 for s in FACELESS_SIGNALS if s in text)
+
     if face_hits >= 2:
         return False, 0
+
     score = min(faceless_hits * 10, 100)
     return score >= 30, score
 
@@ -559,6 +585,7 @@ def search_keyword(keyword, max_results=20):
         "no_warnings":    True,
         "extract_flat":   True,
         "playlist_items": f"1-{max_results}",
+        "ignoreerrors":   True,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -568,13 +595,27 @@ def search_keyword(keyword, max_results=20):
         for entry in (result.get("entries") or []):
             if not entry:
                 continue
-            cid  = entry.get("channel_id")
-            curl = entry.get("channel_url")
-            if cid and curl and cid not in found:
+            curl = entry.get("channel_url") or ""
+            cid  = entry.get("channel_id")  or ""
+
+            # Try to get UCxxxx from channel_url directly
+            url_match = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", curl)
+            if url_match:
+                cid = url_match.group(1)
+            elif not cid.startswith("UC"):
+                # channel_url is a handle like /@name — use uploader_id or channel_id
+                uploader_id = entry.get("uploader_id") or ""
+                if uploader_id.startswith("UC"):
+                    cid = uploader_id
+                # Rebuild a proper /channel/ URL if we have UCxxxx
+                if cid.startswith("UC"):
+                    curl = f"https://www.youtube.com/channel/{cid}"
+
+            if cid and cid.startswith("UC") and curl and cid not in found:
                 found[cid] = {
                     "channel_id":     cid,
                     "channel_name":   entry.get("channel", "Unknown"),
-                    "channel_url":    curl,
+                    "channel_url":    f"https://www.youtube.com/channel/{cid}",
                     "discovered_via": keyword,
                 }
     except Exception as e:
@@ -583,44 +624,113 @@ def search_keyword(keyword, max_results=20):
 
 
 # ================================================================
-#  FAST DATE CHECK — Uses YouTube RSS with real channel_id
-#  channel_id is UCxxxx format from search results — always works
+#  DATE + VIEW FETCH — Uses yt-dlp to get last video date and
+#  estimate channel age. RSS is blocked in some regions so we
+#  fetch the last 15 videos directly via yt-dlp.
 # ================================================================
-def get_channel_dates_fast(channel_id):
+def parse_relative_date(text):
+    if not text:
+        return None
+    text = text.lower().strip()
+    now  = datetime.now(timezone.utc)
+    patterns = [
+        (r'(\d+)\s*second', 'seconds'),
+        (r'(\d+)\s*minute', 'minutes'),
+        (r'(\d+)\s*hour',   'hours'),
+        (r'(\d+)\s*day',    'days'),
+        (r'(\d+)\s*week',   'weeks'),
+        (r'(\d+)\s*month',  'months'),
+        (r'(\d+)\s*year',   'years'),
+    ]
+    for pattern, unit in patterns:
+        m = re.search(pattern, text)
+        if m:
+            n = int(m.group(1))
+            if unit == 'seconds': return now - timedelta(seconds=n)
+            if unit == 'minutes': return now - timedelta(minutes=n)
+            if unit == 'hours':   return now - timedelta(hours=n)
+            if unit == 'days':    return now - timedelta(days=n)
+            if unit == 'weeks':   return now - timedelta(weeks=n)
+            if unit == 'months':  return now - timedelta(days=n*30)
+            if unit == 'years':   return now - timedelta(days=n*365)
+    return None
 
-    if not channel_id or not channel_id.startswith("UC"):
-        return None, None
 
+# ================================================================
+#  DATE + VIEW FETCH — Scrapes channel page directly
+#  Works from all regions. One HTTP request per channel.
+#  RSS is geo-blocked in Pakistan so this is the reliable method.
+# ================================================================
+def get_channel_dates_and_views(channel_id, channel_url, vid_count):
     try:
-        rss_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-        resp    = requests.get(rss_url, headers=headers, timeout=12)
-
+        url     = f"https://www.youtube.com/channel/{channel_id}/videos"
+        headers = {
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        resp = requests.get(url, headers=headers, timeout=12)
         if resp.status_code != 200:
-            return None, None
+            return None, None, 0, 0
 
-        # RSS returns newest ~15 videos with exact published dates
-        published_dates = re.findall(r"<published>(\d{4}-\d{2}-\d{2})", resp.text)
+        page = resp.text
 
-        if not published_dates:
-            return None, None
+        # Extract relative dates and views from page
+        time_texts = re.findall(
+            r'"publishedTimeText":\{"simpleText":"([^"]+)"', page
+        )
+        view_texts = re.findall(
+            r'"viewCountText":\{"simpleText":"([^"]+)"', page
+        )
 
-        dates = []
-        for d in published_dates:
+        if not time_texts:
+            return None, None, 0, 0
+
+        now        = datetime.now(timezone.utc)
+        dates      = []
+        views_list = []
+
+        for t in time_texts[:30]:
+            d = parse_relative_date(t)
+            if d:
+                dates.append(d)
+
+        for v in view_texts[:30]:
             try:
-                dates.append(
-                    datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-                )
-            except ValueError:
+                num = int(re.sub(r'[^\d]', '', v))
+                if num > 0:
+                    views_list.append(num)
+            except Exception:
                 pass
 
-        if dates:
-            return min(dates), max(dates)
+        if not dates:
+            return None, None, 0, 0
+
+        last_date   = max(dates)
+        oldest_date = min(dates)
+        oldest_days = (now - oldest_date).days
+
+        # Better age estimation:
+        # If oldest fetched video is "1 month ago" but channel has 20 videos,
+        # and we fetched 15 — extrapolate proportionally
+        fetched  = len(dates)
+        if vid_count > fetched and fetched > 0:
+            age_days = int(oldest_days * vid_count / fetched)
+        else:
+            age_days = oldest_days
+
+        # Estimate total views from avg of recent videos
+        total_views = 0
+        if views_list and vid_count > 0:
+            avg_v       = sum(views_list) / len(views_list)
+            total_views = int(avg_v * vid_count)
+
+        # Recent views = views of most recent video (index 0 = newest)
+        recent_views = views_list[0] if views_list else 0
+
+        return last_date, age_days, total_views, recent_views
 
     except Exception:
-        pass
-
-    return None, None
+        return None, None, 0, 0
 
 
 # ================================================================
@@ -638,16 +748,13 @@ def get_channel_dates_fast(channel_id):
 # ================================================================
 def calculate_golden_score(subs, vid_count, view_count,
                             age_days, last_video_days,
-                            faceless_score):
+                            faceless_score, recent_views=0):
     score = 0
     vpv   = view_count / max(vid_count, 1) if vid_count > 0 else 0
 
     # ── 1. AGE + VPV COMBINED — the core signal (max 45) ─────────
-    # Young channel growing fast = the most valuable find
-    # Older channel needs much higher VPV to still qualify
     if age_days is not None:
         if age_days <= 90:
-            # VIP zone — any decent VPV is exciting here
             if vpv >= 200000:   score += 45
             elif vpv >= 100000: score += 40
             elif vpv >= 50000:  score += 35
@@ -655,7 +762,6 @@ def calculate_golden_score(subs, vid_count, view_count,
             elif vpv >= 5000:   score += 18
             elif vpv >= 1000:   score += 8
         elif age_days <= 180:
-            # Golden zone — needs stronger VPV to qualify
             if vpv >= 500000:   score += 40
             elif vpv >= 200000: score += 33
             elif vpv >= 100000: score += 26
@@ -663,14 +769,11 @@ def calculate_golden_score(subs, vid_count, view_count,
             elif vpv >= 20000:  score += 10
             elif vpv >= 5000:   score += 4
         elif age_days <= 365:
-            # Mature zone — only very high VPV is worth noting
             if vpv >= 500000:   score += 30
             elif vpv >= 200000: score += 20
             elif vpv >= 100000: score += 12
             elif vpv >= 50000:  score += 5
-            # below 50k VPV at this age = not golden, gets 0
     else:
-        # Age unknown — use VPV alone, conservative scoring
         if vpv >= 500000:       score += 25
         elif vpv >= 200000:     score += 18
         elif vpv >= 100000:     score += 12
@@ -691,9 +794,8 @@ def calculate_golden_score(subs, vid_count, view_count,
         score += 8
     elif 61 <= vid_count <= 100:
         score += 2
-    # 100+ gets 0
 
-    # ── 4. Recent activity — must be uploading now (max 15) ──────
+    # ── 4. Recent activity (max 15) ──────────────────────────────
     if last_video_days is not None:
         if last_video_days <= 7:
             score += 15
@@ -710,30 +812,143 @@ def calculate_golden_score(subs, vid_count, view_count,
     elif faceless_score >= 30:
         score += 3
 
+    # ── 6. RECENT VIRAL SIGNAL (max 15) ──────────────────────────
+    # Recent video getting good views = audience loves the content
+    # Last 30 days checked (not just 7) to allow upload schedule variation
+    if recent_views > 0 and last_video_days is not None and last_video_days <= 30:
+        if recent_views >= 200000:   score += 15
+        elif recent_views >= 100000: score += 12
+        elif recent_views >= 50000:  score += 10
+        elif recent_views >= 30000:  score += 7
+        elif recent_views >= 10000:  score += 4
+        elif recent_views >= 3000:   score += 2
+
+    # ── 7. SWEET SPOT BONUS (max 10) ─────────────────────────────
+    # Core golden pattern: young channel, quality content, fast growth
+    # Slightly loose ranges to allow natural variation
+    # ~2-5 months old + decent subs + not spamming videos
+    if (age_days is not None and 60 <= age_days <= 180
+            and subs >= 15000
+            and 8 <= vid_count <= 40):
+        score += 10
+    # Partial bonus — meets most but not all conditions
+    elif (age_days is not None and 60 <= age_days <= 180
+            and subs >= 8000
+            and 8 <= vid_count <= 40):
+        score += 5
+
     return min(score, 100)
 
 
 # ================================================================
 #  CHANNEL SCORER
 # ================================================================
-def score_channel(channel, niche):
-    now      = datetime.now(timezone.utc)
-    ydl_opts = {
+# INTELLIGENT NICHE THRESHOLD SYSTEM
+# Adjusts golden score threshold per niche based on existing data.
+# Stays within ±5 points of your personal GOLDEN_SCORE_MIN setting.
+# Never goes too loose (bad results) or too tight (zero results).
+# ================================================================
+def get_niche_threshold(conn, niche):
+    try:
+        c = conn.cursor()
+        # Get score distribution for this niche
+        c.execute('''SELECT AVG(golden_score), MAX(golden_score), COUNT(*)
+                     FROM channels WHERE niche=?''', (niche,))
+        row = c.fetchone()
+        if not row or not row[0] or row[2] < 10:
+            # Not enough data yet — use your personal threshold
+            return GOLDEN_SCORE_MIN
+
+        avg_score = row[0]
+        max_score = row[1]
+        count     = row[2]
+
+        # Calculate intelligent threshold:
+        # If average score is very low, loosen slightly (but max -5)
+        # If average score is high, tighten slightly (but max +5)
+        # Always anchored to your personal GOLDEN_SCORE_MIN
+        if avg_score < 20:
+            # Very low scoring niche — loosen by up to 5 points
+            adjustment = -min(5, int((20 - avg_score) / 4))
+        elif avg_score > 50:
+            # High scoring niche — tighten by up to 3 points
+            adjustment = min(3, int((avg_score - 50) / 5))
+        else:
+            adjustment = 0
+
+        threshold = GOLDEN_SCORE_MIN + adjustment
+
+        # Hard boundaries: never below 45 or above 65
+        threshold = max(45, min(65, threshold))
+        return threshold
+    except Exception:
+        return GOLDEN_SCORE_MIN
+
+
+# ================================================================
+def score_channel(channel, niche, conn=None):
+    now = datetime.now(timezone.utc)
+
+    # Step 1: Fast flat fetch for basic channel metadata
+    ydl_flat = {
         "quiet":        True,
         "no_warnings":  True,
         "extract_flat": True,
         "playlistend":  1,
+        "ignoreerrors": True,
+    }
+    # Step 2: Full fetch for real total view count (no extract_flat)
+    ydl_full = {
+        "quiet":       True,
+        "no_warnings": True,
+        "playlistend": 0,
+        "skip_download": True,
+        "extract_flat": True,
+        "ignoreerrors": True,
     }
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_flat) as ydl:
             info = ydl.extract_info(channel["channel_url"], download=False)
 
-        subs       = info.get("channel_follower_count") or 0
+        subs      = info.get("channel_follower_count") or 0
+        vid_count = info.get("playlist_count") or 0
+        name      = info.get("channel") or channel["channel_name"]
+        desc      = info.get("description") or ""
+        language  = info.get("language") or ""
+
+        # Extract real UCxxxx ID — try channel_url first (most reliable)
+        # Handles two URL formats:
+        # Format A: youtube.com/channel/UCxxxxxxxxxxxxxxxxxx  <- direct UCxxxx
+        # Format B: youtube.com/@handlename                  <- needs resolution
+        real_cid = None
+
+        # Format A — direct UCxxxx in URL
+        url_match = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", channel["channel_url"])
+        if url_match:
+            real_cid = url_match.group(1)
+
+        # Format B — handle URL, try to get UCxxxx from yt-dlp info
+        if not real_cid:
+            real_cid = info.get("channel_id") or ""
+
+        # Format B fallback — try info channel_url
+        if not real_cid or not real_cid.startswith("UC"):
+            info_url  = info.get("channel_url") or ""
+            url_match2 = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", info_url)
+            if url_match2:
+                real_cid = url_match2.group(1)
+
+        # Last resort — try uploader_id which yt-dlp sometimes puts UCxxxx in
+        if not real_cid or not real_cid.startswith("UC"):
+            uploader_id = info.get("uploader_id") or ""
+            if uploader_id.startswith("UC"):
+                real_cid = uploader_id
+
+        if not real_cid:
+            real_cid = channel["channel_id"]
+
+        # ── VIEW COUNT — from flat fetch or yt-dlp estimate ─────────
         view_count = info.get("view_count") or 0
-        vid_count  = info.get("playlist_count") or 0
-        name       = info.get("channel") or channel["channel_name"]
-        desc       = info.get("description") or ""
-        language   = info.get("language") or ""
 
         # ── ENGLISH ONLY FILTER ───────────────────────────────────
         # Reject if yt-dlp reports a clearly non-English language tag
@@ -789,46 +1004,52 @@ def score_channel(channel, niche):
         if subs > MAX_SUBSCRIBERS or (subs > 0 and subs < MIN_SUBSCRIBERS):
             return None
 
-        # Hard reject: 100+ videos with under 150k subs = slow grower pattern
+        # Hard reject — slow grower patterns:
+        # 100+ videos with under 150k subs = not growing fast enough
         if vid_count > 100 and subs < 150000:
             return None
+
+        # Hard reject — upload spammer pattern:
+        # Posting tons of content but audience not growing
+        # More than 3 videos per 1000 subscribers = content farm signal
+        if vid_count > 20 and subs > 0:
+            vids_per_1k_subs = (vid_count / subs) * 1000
+            if vids_per_1k_subs > 3.0:
+                return None
 
         is_faceless, faceless_score = detect_faceless(name, desc)
         if not is_faceless:
             return None
 
-        # Use channel_id directly for RSS — this is the UCxxxx ID from search
-        cid                   = channel["channel_id"]
-        first_date, last_date = get_channel_dates_fast(cid)
-        age_days              = None
-        last_video_days       = None
+        # ── DATES + VIEWS via page scrape ────────────────────────────
+        last_date, age_days, ytdlp_views, recent_views = get_channel_dates_and_views(
+            real_cid, channel["channel_url"], vid_count
+        )
 
+        last_video_days = None
         if last_date is not None:
             last_video_days = (now - last_date).days
             if last_video_days > MAX_LAST_VIDEO_DAYS:
                 return None
 
-        if first_date is not None:
-            oldest_rss_days = (now - first_date).days
-            # RSS only returns the 15 most recent videos.
-            # If channel has more than 15 videos, min(RSS dates) is NOT the
-            # first video date — it is the 15th most recent video.
-            # Extrapolate the real channel age using upload frequency.
-            if vid_count > 15:
-                age_days = int(oldest_rss_days * vid_count / 15)
-            else:
-                age_days = oldest_rss_days
-            if age_days > MAX_CHANNEL_AGE_DAYS:
-                return None
+        if age_days is not None and age_days > MAX_CHANNEL_AGE_DAYS:
+            return None
+
+        # Use scraped views if flat fetch returned 0
+        if view_count == 0 and ytdlp_views > 0:
+            view_count = ytdlp_views
 
         golden_score = calculate_golden_score(
             subs, vid_count, view_count,
             age_days, last_video_days,
-            faceless_score
+            faceless_score, recent_views
         )
 
+        # Use intelligent niche-aware threshold (anchored to your personal setting)
+        niche_threshold = get_niche_threshold(conn, niche) if conn else GOLDEN_SCORE_MIN
+
         return {
-            "channel_id":       channel["channel_id"],
+            "channel_id":       real_cid,
             "channel_name":     name,
             "channel_url":      channel["channel_url"],
             "niche":            niche,
@@ -837,11 +1058,12 @@ def score_channel(channel, niche):
             "video_count":      vid_count,
             "discovered_via":   channel["discovered_via"],
             "golden_score":     golden_score,
-            "is_golden":        1 if golden_score >= GOLDEN_SCORE_MIN else 0,
+            "is_golden":        1 if golden_score >= niche_threshold else 0,
             "is_faceless":      1,
             "faceless_score":   faceless_score,
             "channel_age_days": age_days,
             "last_video_days":  last_video_days,
+            "recent_views":     recent_views,
             "date_found":       now.isoformat(),
         }
 
@@ -885,23 +1107,85 @@ def save_channel(conn, ch):
 #  PRINT STATUS
 # ================================================================
 def print_status(ch):
-    score    = ch["golden_score"]
-    subs     = ch["subscribers"]
-    name     = ch["channel_name"]
-    age      = ch.get("channel_age_days")
-    last     = ch.get("last_video_days")
-    age_str  = f"{age}d"  if age  is not None else "?d"
-    last_str = f"{last}d" if last is not None else "?d"
+    score        = ch["golden_score"]
+    subs         = ch["subscribers"]
+    name         = ch["channel_name"]
+    niche        = ch.get("niche", "")
+    age          = ch.get("channel_age_days")
+    last         = ch.get("last_video_days")
+    vid_count    = ch.get("video_count") or 0
+    total_views  = ch.get("total_views") or 0
+    faceless_sc  = ch.get("faceless_score") or 0
+    recent_views = ch.get("recent_views") or 0
 
-    if score >= GOLDEN_SCORE_MIN:
-        tag = "*** GOLDEN ***"
-    elif score >= 35:
-        tag = ">> PROMISING  "
+    age_str  = f"{age}d"  if age  is not None else "?"
+    last_str = f"{last}d" if last is not None else "?"
+
+    # Format subs
+    if subs >= 1000000:
+        subs_str = f"{subs/1000000:.1f}M"
+    elif subs >= 1000:
+        subs_str = f"{subs/1000:.1f}K"
     else:
-        tag = "   regular    "
+        subs_str = str(subs)
 
-    print(f"  {tag} | Score:{score:>3} | Age:{age_str:>5} "
-          f"| Last:{last_str:>5} | Subs:{subs:>8,} | {name}")
+    # VPV
+    vpv = int(total_views / max(vid_count, 1)) if vid_count > 0 else 0
+    if vpv >= 1000000:
+        vpv_str = f"{vpv/1000000:.1f}M"
+    elif vpv >= 1000:
+        vpv_str = f"{vpv/1000:.0f}K"
+    else:
+        vpv_str = str(vpv) if vpv > 0 else "—"
+
+    # Recent views
+    if recent_views >= 1000000:
+        rv_str = f"{recent_views/1000000:.1f}M"
+    elif recent_views >= 1000:
+        rv_str = f"{recent_views/1000:.0f}K"
+    else:
+        rv_str = str(recent_views) if recent_views > 0 else "—"
+
+    # Consistent views signal
+    consistent = "YES" if recent_views >= 10000 else "no"
+
+    # Faceless label
+    if faceless_sc >= 70:
+        face_str = "FACELESS✓"
+    elif faceless_sc >= 40:
+        face_str = "likely"
+    else:
+        face_str = "unclear"
+
+    # Status tag
+    if score >= GOLDEN_SCORE_MIN:
+        tag   = "★ GOLDEN"
+        line  = "=" * 72
+        print(f"\n  {line}")
+        print(f"  {tag}  ┃  Score: {score}/100  ┃  {name}")
+        print(f"  {line}")
+    elif score >= PROMISING_SCORE_MIN:
+        tag = "▲ PROMISING"
+        print(f"\n  {'─'*72}")
+        print(f"  {tag}  ┃  Score: {score}/100  ┃  {name}")
+    else:
+        # Regular — compact single line
+        print(f"     regular  {score:>3}/100 | {name:<32} | "
+              f"Age:{age_str:>5} Last:{last_str:>4} Subs:{subs_str:>7}")
+        return
+
+    # Detailed block for Golden and Promising only
+    print(f"  {'─'*72}")
+    print(f"  Niche          : {niche}")
+    print(f"  Channel Age    : {age_str}  (started ~{age_str} ago)")
+    print(f"  Last Upload    : {last_str} ago")
+    print(f"  Total Videos   : {vid_count}")
+    print(f"  Subscribers    : {subs_str}")
+    print(f"  Views/Video    : {vpv_str}")
+    print(f"  Latest Video   : {rv_str} views")
+    print(f"  Consistent?    : {consistent}  (latest vid {rv_str})")
+    print(f"  Faceless       : {face_str}  ({faceless_sc}%)")
+    print(f"  {'─'*72}")
 
 
 # ================================================================
@@ -989,7 +1273,7 @@ def main():
 
         with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as ex:
             futures = {
-                ex.submit(score_channel, ch, niche): cid
+                ex.submit(score_channel, ch, niche, conn): cid
                 for cid, ch in new_channels.items()
             }
             for future in as_completed(futures):
@@ -999,7 +1283,7 @@ def main():
                         continue
                     save_channel(conn, result)
                     print_status(result)
-                    if result["is_golden"]:
+                    if result["is_golden"] or result["golden_score"] >= PROMISING_SCORE_MIN:
                         golden_list.append(result)
                 except Exception:
                     pass

@@ -35,11 +35,11 @@ def load_data():
     top_golden = [dict(row) for row in c.fetchall()]
 
     # Score distribution
-    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score >= 55")
+    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score >= 50")
     s_gold = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score >= 35 AND golden_score < 55")
+    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score >= 30 AND golden_score < 55")
     s_prom = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score < 35")
+    c.execute("SELECT COUNT(*) FROM channels WHERE golden_score < 30")
     s_reg = c.fetchone()[0]
 
     try:
@@ -118,7 +118,7 @@ def generate_html(channels, total, golden_count, niche_count, keyword_count,
         if is_golden:
             row_class = "row-gold"
             badge     = '<span class="badge badge-gold">⭐ GOLDEN</span>'
-        elif score >= 35:
+        elif score >= 30:
             row_class = "row-prom"
             badge     = '<span class="badge badge-prom">▲ PROMISING</span>'
         else:
@@ -128,9 +128,9 @@ def generate_html(channels, total, golden_count, niche_count, keyword_count,
         age_str  = f"{age}d"  if age  is not None else "—"
         last_str = f"{last}d" if last is not None else "—"
 
-        if score >= 55:
+        if score >= 50:
             score_class = "score-gold"
-        elif score >= 35:
+        elif score >= 30:
             score_class = "score-prom"
         else:
             score_class = "score-reg"
@@ -932,7 +932,7 @@ tbody td {{
           <div class="stat-icon">▲</div>
           <div class="stat-val green">{s_prom}</div>
           <div class="stat-label">Promising</div>
-          <div class="stat-sub">Score 35–54</div>
+          <div class="stat-sub">Score 30–54</div>
         </div>
         <div class="stat-card red">
           <div class="stat-icon">🧩</div>
@@ -1205,6 +1205,11 @@ def main():
     # Inject niche data for JS
     html = html.replace("{json_niches}", json_niches)
 
+    # index.html for Vercel deployment
+    with open("index.html", "w", encoding="utf-8") as f:
+        f.write(html)
+
+    # viewer.html for local use
     with open("viewer.html", "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -1212,7 +1217,8 @@ def main():
     print(f"  Total channels  : {total}")
     print(f"  Golden channels : {golden_count}")
     print(f"  Niches          : {niche_count}")
-    print(f"\n  Double-click viewer.html to open in browser.")
+    print(f"\n  Local  : viewer.html  (double-click to open)")
+    print(f"  Vercel : index.html   (push to GitHub to go live)")
 
 
 if __name__ == "__main__":
