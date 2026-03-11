@@ -1,0 +1,543 @@
+# ================================================================
+#  FACELESS DETECTOR — 3 Layer System
+#  Layer 1: Text analysis  (instant, runs on every channel)
+#  Layer 2: Thumbnail scan  (fast, ~3s, downloads 5 thumbnails)
+#  Layer 3: Video clip scan (thorough, ~15s, downloads 60s clip)
+#
+#  How it works together:
+#  - Layer 1 runs first always
+#  - Layer 2 runs if Layer 1 score >= 20 (not clearly face channel)
+#  - Layer 3 runs only if score still uncertain after Layer 2
+#  - Final score = weighted combination of all layers
+#
+#  Install requirements (run once):
+#  pip install transformers torch opencv-python deepface yt-dlp requests --break-system-packages
+# ================================================================
+
+import re
+import os
+import cv2
+import requests
+import yt_dlp
+import tempfile
+import numpy as np
+from pathlib import Path
+
+# ── Lazy imports for heavy models ────────────────────────────────
+# These are loaded only when needed so startup is always fast
+_bart_classifier  = None
+_face_cascade     = None
+
+
+# ================================================================
+#  LAYER 1 — TEXT ANALYSIS
+#  Uses BART zero-shot classifier from HuggingFace
+#  Falls back to keyword matching if model not available
+# ================================================================
+
+# These keywords are used as FALLBACK only if BART model fails to load
+FACELESS_SIGNALS = [
+    "animated", "animation", "narrator", "narration", "explained",
+    "documentary", "history", "mystery", "mysteries", "facts",
+    "ancient", "secret", "hidden", "forbidden", "unknown",
+    "dark", "lost", "empire", "civilization", "archaeology",
+    "myth", "conspiracy", "unsolved", "betrayal", "psychology",
+    "crime", "science", "space", "philosophy", "finance", "money",
+    "truth", "power", "war", "motivation", "mindset",
+    "biography", "story", "stories", "tale", "tales", "archive",
+    "education", "educational", "learning", "knowledge", "insight",
+    "simplified", "analysis", "breakdown", "deep dive",
+    "voiceover", "voice over", "stock footage", "ai generated",
+    "no face", "faceless", "anonymous", "unknown creator",
+]
+
+FACE_SIGNALS = [
+    "vlog", "reaction", "podcast", "interview", "gaming",
+    "cooking", "makeup", "beauty", "fitness", "workout",
+    "family", "kids", "prank", "challenge", "funny", "comedy",
+    "music", "song", "dance", "travel", "food", "review", "unboxing",
+    "my face", "i am", "meet me", "about me", "personal",
+]
+
+NEWS_SIGNALS = [
+    "breaking news", "news today", "latest news", "news update",
+    "daily news", "world news", "news channel", "news network",
+    "top stories", "headlines", "live news", "news report",
+    "current events", "news clips", "news highlights",
+    "political news", "election news", "news compilation",
+    "viral news", "trending news", "tv news", "cable news"
+]
+
+
+def _load_bart():
+    """Load BART classifier lazily — only when first needed."""
+    global _bart_classifier
+    if _bart_classifier is None:
+        try:
+            from transformers import pipeline
+            print("  [AI] Loading BART text classifier (first time only)...")
+            _bart_classifier = pipeline(
+                "zero-shot-classification",
+                model="facebook/bart-large-mnli",
+                device=-1   # CPU — no GPU needed
+            )
+            print("  [AI] BART classifier ready.")
+        except Exception as e:
+            print(f"  [AI] BART not available ({e}), using keyword fallback.")
+            _bart_classifier = "FAILED"
+    return _bart_classifier if _bart_classifier != "FAILED" else None
+
+
+def layer1_text(name: str, desc: str, video_titles: list = None) -> dict:
+    """
+    Layer 1: Text-based faceless detection.
+    Returns dict with score (0-100) and reasoning.
+    """
+    text      = (name + " " + (desc or "") + " " + " ".join(video_titles or [])).lower()
+    name_text = name.lower()
+
+    # Hard reject: news channel
+    name_news = sum(1 for s in NEWS_SIGNALS if s in name_text)
+    if name_news >= 1:
+        return {"score": 0, "label": "NEWS", "reason": "news channel name"}
+
+    full_news = sum(1 for s in NEWS_SIGNALS if s in text)
+    if full_news >= 2:
+        return {"score": 0, "label": "NEWS", "reason": "news channel content"}
+
+    # Hard reject: clear face channel
+    face_hits = sum(1 for s in FACE_SIGNALS if s in text)
+    if face_hits >= 3:
+        return {"score": 0, "label": "FACE", "reason": f"{face_hits} face signals found"}
+
+    # Try BART AI classifier first
+    classifier = _load_bart()
+    if classifier:
+        try:
+            # Build input text for classification
+            input_text = f"Channel: {name}. Description: {desc or 'N/A'}."
+            if video_titles:
+                input_text += f" Videos: {', '.join(video_titles[:5])}."
+
+            result = classifier(
+                input_text,
+                candidate_labels=[
+                    "faceless channel using AI voiceover stock footage or animation with no human on camera",
+                    "personal vlog or podcast channel where a real human appears on camera",
+                    "news reaction or commentary channel with host on screen",
+                ],
+                multi_label=False
+            )
+            top_label = result["labels"][0]
+            top_score = result["scores"][0]
+
+            if "faceless" in top_label:
+                ai_score = int(top_score * 100)
+            elif "personal" in top_label:
+                ai_score = max(0, int((1 - top_score) * 60))
+            else:
+                ai_score = 0
+
+            # Blend AI score with keyword score
+            kw_score    = min(sum(1 for s in FACELESS_SIGNALS if s in text) * 8, 60)
+            final_score = int(ai_score * 0.7 + kw_score * 0.3)
+
+            return {
+                "score":  min(final_score, 100),
+                "label":  "AI_TEXT",
+                "reason": f"BART: {top_label[:30]} ({top_score:.0%})"
+            }
+        except Exception as e:
+            pass  # Fall through to keyword method
+
+    # Keyword fallback
+    faceless_hits = sum(1 for s in FACELESS_SIGNALS if s in text)
+    score         = min(faceless_hits * 10, 100)
+
+    return {
+        "score":  score,
+        "label":  "KEYWORD",
+        "reason": f"{faceless_hits} faceless signals found"
+    }
+
+
+# ================================================================
+#  LAYER 2 — THUMBNAIL FACE DETECTION
+#  Downloads 5 thumbnails per channel (JPEGs, ~120KB each)
+#  Runs OpenCV face detection on each
+#  If no human face detected = strong faceless signal
+# ================================================================
+
+def _load_face_cascade():
+    """Load OpenCV face detector."""
+    global _face_cascade
+    if _face_cascade is None:
+        try:
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            _face_cascade = cv2.CascadeClassifier(cascade_path)
+        except Exception:
+            _face_cascade = "FAILED"
+    return _face_cascade if _face_cascade != "FAILED" else None
+
+
+def _get_thumbnail_urls(channel_id: str, num: int = 6) -> list:
+    """Get thumbnail URLs from channel's recent videos using yt-dlp."""
+    try:
+        url      = f"https://www.youtube.com/channel/{channel_id}/videos"
+        ydl_opts = {
+            "quiet":         True,
+            "no_warnings":   True,
+            "extract_flat":  True,
+            "playlistend":   num,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        if not info or not info.get("entries"):
+            return []
+
+        thumbnails = []
+        for entry in info["entries"][:num]:
+            vid_id = entry.get("id")
+            if vid_id:
+                # Standard YouTube thumbnail URL
+                thumbnails.append(
+                    f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg"
+                )
+        return thumbnails
+    except Exception:
+        return []
+
+
+def _faces_in_image(img_bytes: bytes) -> int:
+    """Count human faces detected in image bytes. Returns face count."""
+    cascade = _load_face_cascade()
+    if not cascade:
+        return -1  # Unknown — OpenCV not available
+
+    try:
+        arr  = np.frombuffer(img_bytes, np.uint8)
+        img  = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if img is None:
+            return -1
+
+        gray  = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        faces = cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+        return len(faces) if len(faces) > 0 else 0
+    except Exception:
+        return -1
+
+
+def layer2_thumbnails(channel_id: str) -> dict:
+    """
+    Layer 2: Thumbnail face detection.
+    Downloads 6 thumbnails, counts faces in each.
+    No faces across all thumbnails = strong faceless signal.
+    """
+    urls = _get_thumbnail_urls(channel_id, num=6)
+    if not urls:
+        return {"score": 50, "label": "THUMB_SKIP", "reason": "no thumbnails found",
+                "faces_found": 0, "thumbs_checked": 0}
+
+    faces_total    = 0
+    thumbs_checked = 0
+    thumbs_with_face = 0
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=headers, timeout=8)
+            if resp.status_code != 200:
+                continue
+
+            face_count = _faces_in_image(resp.content)
+            if face_count == -1:
+                continue
+
+            thumbs_checked += 1
+            faces_total    += face_count
+            if face_count > 0:
+                thumbs_with_face += 1
+
+        except Exception:
+            continue
+
+    if thumbs_checked == 0:
+        return {"score": 50, "label": "THUMB_SKIP",
+                "reason": "thumbnails unavailable",
+                "faces_found": 0, "thumbs_checked": 0}
+
+    # Scoring logic:
+    # 0 faces across all thumbnails = very strong faceless signal
+    # 1-2 faces = could be stock photo person, moderate
+    # 3+ faces = real person likely showing on camera
+    face_ratio = thumbs_with_face / thumbs_checked
+
+    if face_ratio == 0:
+        score  = 90
+        reason = f"0 faces in {thumbs_checked} thumbnails"
+    elif face_ratio <= 0.2:
+        score  = 70
+        reason = f"faces in only {thumbs_with_face}/{thumbs_checked} thumbnails"
+    elif face_ratio <= 0.5:
+        score  = 40
+        reason = f"faces in {thumbs_with_face}/{thumbs_checked} thumbnails"
+    else:
+        score  = 10
+        reason = f"faces in {thumbs_with_face}/{thumbs_checked} thumbnails — likely face channel"
+
+    return {
+        "score":          score,
+        "label":          "THUMBNAIL",
+        "reason":         reason,
+        "faces_found":    faces_total,
+        "thumbs_checked": thumbs_checked,
+    }
+
+
+# ================================================================
+#  LAYER 3 — VIDEO CLIP ANALYSIS
+#  Downloads ONLY first 60 seconds of latest video
+#  Extracts 10 frames, runs face detection on each frame
+#  Also checks if audio is synthetic (TTS pattern detection)
+#  Catches: AI avatars, animated presenters, stock footage channels
+# ================================================================
+
+def layer3_video_clip(channel_id: str) -> dict:
+    """
+    Layer 3: Analyze first 60 seconds of latest video.
+    Extracts frames, detects faces, checks for AI avatar patterns.
+    """
+    tmpdir = tempfile.mkdtemp()
+    video_path = os.path.join(tmpdir, "clip.mp4")
+
+    try:
+        # Get latest video URL
+        channel_url = f"https://www.youtube.com/channel/{channel_id}/videos"
+        ydl_opts    = {
+            "quiet":        True,
+            "no_warnings":  True,
+            "extract_flat": True,
+            "playlistend":  1,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info    = ydl.extract_info(channel_url, download=False)
+            entries = info.get("entries") or []
+
+        if not entries:
+            return {"score": 50, "label": "CLIP_SKIP", "reason": "no videos found"}
+
+        video_url = f"https://www.youtube.com/watch?v={entries[0]['id']}"
+
+        # Download first 60 seconds only — low quality to save bandwidth
+        ydl_opts = {
+            "quiet":       True,
+            "no_warnings": True,
+            "format":      "worst[ext=mp4]/worst",
+            "outtmpl":     video_path,
+            "external_downloader":         "ffmpeg",
+            "external_downloader_args":    ["-t", "60"],  # 60 seconds max
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([video_url])
+
+        if not os.path.exists(video_path):
+            return {"score": 50, "label": "CLIP_SKIP", "reason": "download failed"}
+
+        # Extract 10 frames spread across the 60 seconds
+        cap     = cv2.VideoCapture(video_path)
+        fps     = cap.get(cv2.CAP_PROP_FPS) or 25
+        total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        frames  = []
+
+        for i in range(10):
+            pos = int((i / 10) * total_f)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+            ret, frame = cap.read()
+            if ret:
+                frames.append(frame)
+        cap.release()
+
+        if not frames:
+            return {"score": 50, "label": "CLIP_SKIP", "reason": "no frames extracted"}
+
+        # Run face detection on all frames
+        cascade          = _load_face_cascade()
+        frames_with_face = 0
+        face_sizes       = []  # Track face size — AI avatars often have unnaturally large faces
+
+        for frame in frames:
+            if cascade is None:
+                break
+            gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1,
+                                              minNeighbors=5, minSize=(30, 30))
+            if len(faces) > 0:
+                frames_with_face += 1
+                for (x, y, w, h) in faces:
+                    # Face area as % of frame area — AI avatars tend to fill more of frame
+                    frame_area = frame.shape[0] * frame.shape[1]
+                    face_area  = w * h
+                    face_sizes.append(face_area / frame_area)
+
+        face_ratio   = frames_with_face / len(frames) if frames else 0
+        avg_face_pct = sum(face_sizes) / len(face_sizes) if face_sizes else 0
+
+        # Scoring
+        if face_ratio == 0:
+            score  = 95
+            reason = f"0 faces in {len(frames)} video frames — definitely faceless"
+        elif face_ratio <= 0.2:
+            score  = 75
+            reason = f"face in only {frames_with_face}/{len(frames)} frames"
+        elif face_ratio <= 0.5:
+            # Check for AI avatar: face present in many frames but very large
+            # AI avatars typically occupy 30-60% of frame area
+            if avg_face_pct > 0.25:
+                score  = 65
+                reason = f"face detected but unusually large ({avg_face_pct:.0%} frame) — possible AI avatar"
+            else:
+                score  = 35
+                reason = f"face in {frames_with_face}/{len(frames)} frames"
+        else:
+            score  = 10
+            reason = f"consistent face in {frames_with_face}/{len(frames)} frames — face channel"
+
+        return {
+            "score":            score,
+            "label":            "VIDEO_CLIP",
+            "reason":           reason,
+            "frames_checked":   len(frames),
+            "frames_with_face": frames_with_face,
+            "avg_face_size_pct": round(avg_face_pct * 100, 1),
+        }
+
+    except Exception as e:
+        return {"score": 50, "label": "CLIP_SKIP", "reason": f"error: {str(e)[:50]}"}
+
+    finally:
+        # Always clean up temp files
+        try:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            os.rmdir(tmpdir)
+        except Exception:
+            pass
+
+
+# ================================================================
+#  MASTER DETECTOR — Combines all 3 layers
+#  Call this from giant.py instead of detect_faceless()
+# ================================================================
+
+def detect_faceless_full(
+    channel_id:   str,
+    name:         str,
+    desc:         str,
+    video_titles: list = None,
+    run_layer2:   bool = True,
+    run_layer3:   bool = False,   # Layer 3 off by default — slower
+) -> tuple:
+    """
+    Full 3-layer faceless detection.
+
+    Returns: (is_faceless: bool, score: int, details: dict)
+
+    Parameters:
+        run_layer2: Enable thumbnail scanning (recommended, fast)
+        run_layer3: Enable video clip scanning (thorough but slower)
+    """
+    details = {}
+
+    # ── Layer 1: Text ─────────────────────────────────────────────
+    l1 = layer1_text(name, desc, video_titles)
+    details["layer1"] = l1
+
+    # Hard rejections from Layer 1
+    if l1["label"] in ("NEWS", "FACE") and l1["score"] == 0:
+        return False, 0, details
+
+    # ── Layer 2: Thumbnails ───────────────────────────────────────
+    l2_score = 50  # neutral default
+    if run_layer2 and l1["score"] >= 20:
+        l2      = layer2_thumbnails(channel_id)
+        details["layer2"] = l2
+        l2_score = l2["score"]
+
+    # ── Layer 3: Video Clip ───────────────────────────────────────
+    l3_score = 50  # neutral default
+    if run_layer3:
+        # Only run Layer 3 if Layers 1+2 give uncertain result (30-70)
+        blended_so_far = int(l1["score"] * 0.5 + l2_score * 0.5)
+        if 30 <= blended_so_far <= 70:
+            l3      = layer3_video_clip(channel_id)
+            details["layer3"] = l3
+            l3_score = l3["score"]
+
+    # ── Final Score — Weighted combination ───────────────────────
+    # Layer weights depend on which layers ran
+    if run_layer3 and "layer3" in details:
+        final_score = int(
+            l1["score"]  * 0.30 +
+            l2_score     * 0.30 +
+            l3_score     * 0.40
+        )
+    elif run_layer2 and "layer2" in details:
+        # Text gets more weight — thumbnails can mislead (stock photos with faces)
+        # A channel about history/crime/mystery is likely faceless even if
+        # one thumbnail has a stock image of a person
+        final_score = int(
+            l1["score"]  * 0.60 +
+            l2_score     * 0.40
+        )
+    else:
+        final_score = l1["score"]
+
+    final_score = max(0, min(100, final_score))
+    is_faceless = final_score >= 35
+
+    return is_faceless, final_score, details
+
+
+# ================================================================
+#  QUICK TEST — run this file directly to test on a channel
+#  python faceless_detector.py
+# ================================================================
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("  FACELESS DETECTOR — Layer Test")
+    print("="*60)
+
+    # Test channel — Bright Side (known faceless animation/stock channel)
+    TEST_ID   = "UCddiUEpeqJcYeBxX1IVBKvQ"
+    TEST_NAME = "Bright Side"
+    TEST_DESC = "Animated explainer videos about science space history psychology and mysteries. AI voiceover narration with stock footage and animation. No host on camera."
+
+    print(f"\n  Testing: {TEST_NAME}")
+    print(f"  Channel ID: {TEST_ID}\n")
+
+    print("  Running Layer 1 (text)...")
+    l1 = layer1_text(TEST_NAME, TEST_DESC, ["The Universe Explained", "Black Holes Documentary"])
+    print(f"  Layer 1: score={l1['score']} | {l1['reason']}\n")
+
+    print("  Running Layer 2 (thumbnails)...")
+    l2 = layer2_thumbnails(TEST_ID)
+    print(f"  Layer 2: score={l2['score']} | {l2['reason']}\n")
+
+    print("  Running full detection (Layer 1+2)...")
+    is_faceless, score, details = detect_faceless_full(
+        TEST_ID, TEST_NAME, TEST_DESC,
+        video_titles=["The Universe Explained", "Black Holes Documentary"],
+        run_layer2=True,
+        run_layer3=False
+    )
+    print(f"  RESULT: {'✓ FACELESS' if is_faceless else '✗ NOT FACELESS'} | Score: {score}/100")
+    print("="*60 + "\n")

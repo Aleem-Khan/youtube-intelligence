@@ -292,120 +292,6 @@ ALL_NICHES = {
         "cold war operations",
         "world war untold stories",
     ],
-
-    # ── NEW NICHES FROM GEMINI 2026 RESEARCH ─────────────────────
-
-    "HUMAN BEHAVIOR & DARK PSYCHOLOGY": [
-        "dark psychology manipulation tactics",
-        "why people lie psychology",
-        "psychological triggers explained",
-        "cult leader manipulation tactics",
-        "body language secrets exposed",
-        "narcissist behavior exposed",
-        "social engineering explained",
-        "mind control techniques history",
-        "toxic behavior patterns explained",
-        "gaslighting psychology explained",
-        "psychopath traits explained",
-        "emotional manipulation tactics",
-        "stockholm syndrome explained",
-        "mob mentality psychology",
-        "revenge psychology explained",
-    ],
-
-    "MICRO HISTORY & DIGITAL ARCHAEOLOGY": [
-        "forgotten internet history explained",
-        "lost media mysteries explained",
-        "dark web mysteries documentary",
-        "internet mysteries unsolved cases",
-        "abandoned websites history",
-        "viral moments origin stories",
-        "old youtube era explained",
-        "early internet dark stories",
-        "digital history lost content",
-        "cicada 3301 mystery explained",
-        "internet rabbit holes explained",
-        "web 1.0 nostalgia history",
-        "forgotten tech history",
-        "online mystery solved explained",
-        "creepypasta origins explained",
-    ],
-
-    "RESTORATION & SATISFYING": [
-        "vintage item restoration satisfying",
-        "antique restoration documentary",
-        "old console restoration video",
-        "typewriter restoration satisfying",
-        "abandoned object restored video",
-        "rusty tool restoration satisfying",
-        "vintage car restoration documentary",
-        "forgotten object restoration",
-        "satisfying restoration transformation",
-        "historical artifact restoration",
-        "old radio restoration satisfying",
-        "broken antique restored video",
-    ],
-
-    "NICHE TECH TUTORIALS": [
-        "trading app tutorial for beginners",
-        "notion workflow explained simply",
-        "obsidian productivity tutorial",
-        "productivity tool walkthrough",
-        "binance tutorial step by step",
-        "clickup workflow tutorial",
-        "automation tools explained simply",
-        "AI tools for beginners guide",
-        "robinhood investing tutorial",
-        "webull tutorial beginners",
-        "make money with AI tools",
-        "passive income AI automation",
-        "digital tools explained simply",
-    ],
-
-    "GEOPOLITICAL STORYTELLING": [
-        "geopolitics explained documentary",
-        "world history predictions explained",
-        "empire rise and fall history",
-        "cold war untold stories",
-        "modern war explained documentary",
-        "superpower rivalry history",
-        "economic collapse history explained",
-        "border conflict history explained",
-        "forgotten wars history",
-        "proxy war history explained",
-        "regime change history",
-        "resource wars history explained",
-        "diplomatic secrets history",
-        "revolution history explained",
-    ],
-
-    "AMBIENT & LOFI": [
-        "lofi music study ambience",
-        "meditative urban ambience video",
-        "rain sounds study music",
-        "coffee shop ambience lofi",
-        "night city ambience relaxing",
-        "medieval tavern ambience",
-        "fantasy world ambience music",
-        "cozy reading ambience music",
-        "japanese city ambience lofi",
-        "dark academia ambience music",
-    ],
-
-    "CORPORATE SCANDALS": [
-        "corporate fraud exposed documentary",
-        "company downfall explained",
-        "financial scandal history",
-        "startup failure explained",
-        "ponzi scheme history explained",
-        "wall street scandal exposed",
-        "biggest corporate lies exposed",
-        "enron scandal explained",
-        "crypto scam exposed history",
-        "billion dollar fraud exposed",
-        "corporate crime documentary",
-        "ceo downfall story explained",
-    ],
 }
 
 
@@ -479,15 +365,8 @@ def init_db():
         faceless_score    INTEGER DEFAULT 0,
         channel_age_days  INTEGER,
         last_video_days   INTEGER,
-        date_found        TEXT,
-        review_status     TEXT DEFAULT 'pending'
+        date_found        TEXT
     )''')
-
-    # Add review_status to existing databases that don't have it
-    try:
-        c.execute("ALTER TABLE channels ADD COLUMN review_status TEXT DEFAULT 'pending'")
-    except Exception:
-        pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS videos (
         video_id    TEXT PRIMARY KEY,
@@ -1011,86 +890,72 @@ def get_niche_threshold(conn, niche):
 def score_channel(channel, niche, conn=None):
     now = datetime.now(timezone.utc)
 
+    # Step 1: Fast flat fetch for basic channel metadata
+    ydl_flat = {
+        "quiet":        True,
+        "no_warnings":  True,
+        "extract_flat": True,
+        "playlistend":  1,
+        "ignoreerrors": True,
+    }
+    # Step 2: Full fetch for real total view count (no extract_flat)
+    ydl_full = {
+        "quiet":       True,
+        "no_warnings": True,
+        "playlistend": 0,
+        "skip_download": True,
+        "extract_flat": True,
+        "ignoreerrors": True,
+    }
     try:
-        # ── Try YouTube API first (clean accurate data) ───────────
-        from youtube_api import get_full_channel_data, YT_API_KEY
-        api_data = None
+        with yt_dlp.YoutubeDL(ydl_flat) as ydl:
+            info = ydl.extract_info(channel["channel_url"], download=False)
 
-        # Extract channel ID from URL
-        real_cid = channel.get("channel_id", "")
+        subs      = info.get("channel_follower_count") or 0
+        vid_count = info.get("playlist_count") or 0
+        name      = info.get("channel") or channel["channel_name"]
+        desc      = info.get("description") or ""
+        language  = info.get("language") or ""
+
+        # Extract real UCxxxx ID — try channel_url first (most reliable)
+        # Handles two URL formats:
+        # Format A: youtube.com/channel/UCxxxxxxxxxxxxxxxxxx  <- direct UCxxxx
+        # Format B: youtube.com/@handlename                  <- needs resolution
+        real_cid = None
+
+        # Format A — direct UCxxxx in URL
         url_match = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", channel["channel_url"])
         if url_match:
             real_cid = url_match.group(1)
 
-        if YT_API_KEY and real_cid.startswith("UC"):
-            api_data = get_full_channel_data(real_cid)
-            if not api_data:
-                pass  # Silent fallback to scraping
+        # Format B — handle URL, try to get UCxxxx from yt-dlp info
+        if not real_cid:
+            real_cid = info.get("channel_id") or ""
 
-        if api_data:
-            # ── CLEAN DATA FROM API ───────────────────────────────
-            name          = api_data["channel_name"]
-            desc          = api_data["description"]
-            subs          = api_data["subscribers"]
-            vid_count     = api_data["video_count"]
-            view_count    = api_data["total_views"]
-            age_days      = api_data["age_days"]
-            last_video_days = api_data["last_video_days"]
-            recent_views  = api_data["recent_views"]
-            video_titles  = api_data["video_titles"]
-            avg_duration  = api_data["avg_video_duration"]
-            uploads_pm    = api_data["uploads_per_month"]
-            avg_engage    = api_data["avg_engagement"]
-        else:
-            # ── FALLBACK: yt-dlp scraping ─────────────────────────
-            ydl_flat = {
-                "quiet": True, "no_warnings": True,
-                "extract_flat": True, "playlistend": 1,
-                "ignoreerrors": True,
-            }
-            with yt_dlp.YoutubeDL(ydl_flat) as ydl:
-                info = ydl.extract_info(channel["channel_url"], download=False)
+        # Format B fallback — try info channel_url
+        if not real_cid or not real_cid.startswith("UC"):
+            info_url  = info.get("channel_url") or ""
+            url_match2 = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", info_url)
+            if url_match2:
+                real_cid = url_match2.group(1)
 
-            subs      = info.get("channel_follower_count") or 0
-            vid_count = info.get("playlist_count") or 0
-            name      = info.get("channel") or channel["channel_name"]
-            desc      = info.get("description") or ""
-            language  = info.get("language") or ""
-            view_count = info.get("view_count") or 0
-            video_titles = []
-            avg_duration = 0
-            uploads_pm   = 0.0
-            avg_engage   = 0.0
+        # Last resort — try uploader_id which yt-dlp sometimes puts UCxxxx in
+        if not real_cid or not real_cid.startswith("UC"):
+            uploader_id = info.get("uploader_id") or ""
+            if uploader_id.startswith("UC"):
+                real_cid = uploader_id
 
-            # Extract real UCxxxx ID
-            if not real_cid or not real_cid.startswith("UC"):
-                real_cid = info.get("channel_id") or ""
-            if not real_cid or not real_cid.startswith("UC"):
-                info_url = info.get("channel_url") or ""
-                m = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", info_url)
-                if m:
-                    real_cid = m.group(1)
-            if not real_cid or not real_cid.startswith("UC"):
-                uploader_id = info.get("uploader_id") or ""
-                if uploader_id.startswith("UC"):
-                    real_cid = uploader_id
-            if not real_cid:
-                real_cid = channel["channel_id"]
+        if not real_cid:
+            real_cid = channel["channel_id"]
 
-            # English filter for scraping fallback
-            if language and language not in ("en", "en-US", "en-GB",
-                                              "en-AU", "en-CA", "en-IN", "", None):
-                return None
+        # ── VIEW COUNT — from flat fetch or yt-dlp estimate ─────────
+        view_count = info.get("view_count") or 0
 
-            # Get dates via page scrape
-            last_date, age_days, ytdlp_views, recent_views = get_channel_dates_and_views(
-                real_cid, channel["channel_url"], vid_count
-            )
-            last_video_days = None
-            if last_date is not None:
-                last_video_days = (now - last_date).days
-            if view_count == 0 and ytdlp_views > 0:
-                view_count = ytdlp_views
+        # ── ENGLISH ONLY FILTER ───────────────────────────────────
+        # Reject if yt-dlp reports a clearly non-English language tag
+        if language and language not in ("en", "en-US", "en-GB", "en-AU",
+                                          "en-CA", "en-IN", "", None):
+            return None
 
         # Script-based detection — counts foreign characters as a percentage
         # of total letters. Rejects only if clearly non-English.
@@ -1130,86 +995,82 @@ def score_channel(channel, niche, conn=None):
                 return 0.0
             return foreign_count / letter_count
 
-        # ── HARD FILTERS — only obvious junk rejected ────────────────
-        # Subscriber range
+        name_ratio = foreign_script_ratio(name)
+        desc_ratio = foreign_script_ratio(desc[:300])
+
+        # Reject if channel name is >25% foreign OR description is >40% foreign
+        if name_ratio > 0.25 or desc_ratio > 0.40:
+            return None
+
         if subs > MAX_SUBSCRIBERS or (subs > 0 and subs < MIN_SUBSCRIBERS):
             return None
 
-        # Age filter
+        # Hard reject — slow grower patterns:
+        # 100+ videos with under 150k subs = not growing fast enough
+        if vid_count > 100 and subs < 150000:
+            return None
+
+        # Hard reject — upload spammer pattern:
+        # Posting tons of content but audience not growing
+        # More than 3 videos per 1000 subscribers = content farm signal
+        if vid_count > 20 and subs > 0:
+            vids_per_1k_subs = (vid_count / subs) * 1000
+            if vids_per_1k_subs > 3.0:
+                return None
+
+        is_faceless, faceless_score, _ = detect_faceless_full(
+            real_cid, name, desc,
+            video_titles=None,
+            run_layer2=True,
+            run_layer3=False,   # set True for deeper scan (slower)
+        )
+        if not is_faceless:
+            return None
+
+        # ── DATES + VIEWS via page scrape ────────────────────────────
+        last_date, age_days, ytdlp_views, recent_views = get_channel_dates_and_views(
+            real_cid, channel["channel_url"], vid_count
+        )
+
+        last_video_days = None
+        if last_date is not None:
+            last_video_days = (now - last_date).days
+            if last_video_days > MAX_LAST_VIDEO_DAYS:
+                return None
+
         if age_days is not None and age_days > MAX_CHANNEL_AGE_DAYS:
             return None
 
-        # Last video filter — must be active
-        if last_video_days is not None and last_video_days > MAX_LAST_VIDEO_DAYS:
-            return None
+        # Use scraped views if flat fetch returned 0
+        if view_count == 0 and ytdlp_views > 0:
+            view_count = ytdlp_views
 
-        # Reject completely empty channels
-        if subs == 0 and vid_count == 0:
-            return None
-
-        # Slow grower: 100+ videos under 50k subs = not interesting
-        if vid_count > 100 and subs < 50000:
-            return None
-
-        # English filter
-        if not api_data:
-            def foreign_script_ratio(text):
-                if not text:
-                    return 0.0
-                letter_count = foreign_count = 0
-                for ch in text:
-                    cp = ord(ch)
-                    if cp < 128:
-                        if ch.isalpha(): letter_count += 1
-                        continue
-                    if (0x0600<=cp<=0x06FF or 0x0900<=cp<=0x097F or
-                        0x0980<=cp<=0x09FF or 0x4E00<=cp<=0x9FFF or
-                        0x3040<=cp<=0x30FF or 0xAC00<=cp<=0xD7AF or
-                        0x0400<=cp<=0x04FF or 0x0E00<=cp<=0x0E7F):
-                        foreign_count += 1; letter_count += 1
-                return foreign_count / letter_count if letter_count else 0.0
-            if foreign_script_ratio(name) > 0.25 or foreign_script_ratio(desc[:300]) > 0.40:
-                return None
-
-        # ── FACELESS DETECTION — score only, no hard reject ──────────
-        # We score faceless confidence but do NOT reject based on it
-        # User manually reviews all channels in dashboard and decides
-        try:
-            is_faceless, faceless_score, _ = detect_faceless_full(
-                real_cid, name, desc,
-                video_titles=video_titles,
-                run_layer2=True,
-                run_layer3=False,
-            )
-        except Exception:
-            is_faceless, faceless_score = False, 0
-
-        # ── SCORING ───────────────────────────────────────────────────
-        golden_score    = calculate_golden_score(
+        golden_score = calculate_golden_score(
             subs, vid_count, view_count,
             age_days, last_video_days,
             faceless_score, recent_views
         )
+
+        # Use intelligent niche-aware threshold (anchored to your personal setting)
         niche_threshold = get_niche_threshold(conn, niche) if conn else GOLDEN_SCORE_MIN
 
         return {
-            "channel_id":         real_cid,
-            "channel_name":       name,
-            "channel_url":        f"https://www.youtube.com/channel/{real_cid}",
-            "niche":              niche,
-            "subscribers":        subs,
-            "total_views":        view_count,
-            "video_count":        vid_count,
-            "discovered_via":     channel["discovered_via"],
-            "golden_score":       golden_score,
-            "is_golden":          1 if golden_score >= niche_threshold else 0,
-            "is_faceless":        1 if is_faceless else 0,
-            "faceless_score":     faceless_score,
-            "channel_age_days":   age_days,
-            "last_video_days":    last_video_days,
-            "recent_views":       recent_views,
-            "date_found":         now.isoformat(),
-            "review_status":      "pending",
+            "channel_id":       real_cid,
+            "channel_name":     name,
+            "channel_url":      channel["channel_url"],
+            "niche":            niche,
+            "subscribers":      subs,
+            "total_views":      view_count,
+            "video_count":      vid_count,
+            "discovered_via":   channel["discovered_via"],
+            "golden_score":     golden_score,
+            "is_golden":        1 if golden_score >= niche_threshold else 0,
+            "is_faceless":      1,
+            "faceless_score":   faceless_score,
+            "channel_age_days": age_days,
+            "last_video_days":  last_video_days,
+            "recent_views":     recent_views,
+            "date_found":       now.isoformat(),
         }
 
     except Exception:
@@ -1228,7 +1089,7 @@ def channel_exists(conn, channel_id):
 def save_channel(conn, ch):
     c = conn.cursor()
     c.execute('''INSERT OR REPLACE INTO channels VALUES
-        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
         ch["channel_id"],
         ch["channel_name"],
         ch["channel_url"],
@@ -1244,7 +1105,6 @@ def save_channel(conn, ch):
         ch.get("channel_age_days"),
         ch.get("last_video_days"),
         ch["date_found"],
-        ch.get("review_status", "pending"),
     ))
     conn.commit()
 
@@ -1365,13 +1225,16 @@ def show_summary(conn):
 # ================================================================
 #  MAIN
 # ================================================================
-def run_niche(conn, niche):
-    """Run full discovery for a single niche. Returns count of channels found."""
+def main():
+    conn  = init_db()
+    niche = show_niche_menu()
     save_niche(conn, niche)
+
+    print(f"\n  Selected: {niche.upper()}")
     keywords = load_keywords(conn, niche)
 
     if not keywords:
-        print(f"  Generating keywords for {niche.upper()}...")
+        print(f"  No keywords yet. Generating now...")
         try:
             subtopics = generate_keywords(niche)
             saved     = save_keywords(conn, niche, subtopics)
@@ -1379,16 +1242,27 @@ def run_niche(conn, niche):
             keywords  = load_keywords(conn, niche)
         except (json.JSONDecodeError, requests.HTTPError) as e:
             print(f"  Keyword generation failed: {e}")
-            return 0
+            conn.close()
+            return
     else:
-        print(f"  {len(keywords)} keywords ready.")
+        print(f"  {len(keywords)} keywords ready to search.")
 
-    total_kw    = len(keywords)
+    total_kw = len(keywords)
+    print(f"\n  Keywords         : {total_kw}")
+    print(f"  Results/keyword  : {RESULTS_PER_KEYWORD}")
+    print(f"  Parallel workers : {PARALLEL_WORKERS}")
+    print(f"  Age filter       : max {MAX_CHANNEL_AGE_DAYS} days")
+    print(f"  Activity filter  : last video max {MAX_LAST_VIDEO_DAYS} days")
+    print(f"  Faceless filter  : ON")
+    print(f"  Golden threshold : {GOLDEN_SCORE_MIN}/100")
+    print(f"\n  Starting...\n")
+    print("-" * 70)
+
     all_found   = {}
-    found_count = 0
+    golden_list = []
 
     for idx, (keyword, subtopic) in enumerate(keywords, 1):
-        print(f"\n  [{idx}/{total_kw}] {keyword}")
+        print(f"\n[{idx}/{total_kw}] {keyword}")
 
         found        = search_keyword(keyword, RESULTS_PER_KEYWORD)
         new_channels = {
@@ -1415,65 +1289,34 @@ def run_niche(conn, niche):
                         continue
                     save_channel(conn, result)
                     print_status(result)
-                    found_count += 1
+                    if result["is_golden"] or result["golden_score"] >= PROMISING_SCORE_MIN:
+                        golden_list.append(result)
                 except Exception:
                     pass
 
         mark_searched(conn, keyword, niche)
         time.sleep(0.3)
 
-    return found_count
-
-
-def main():
-    import sys
-    conn = init_db()
-
-    # ── MODE: custom niche passed as argument ──────────────────────
-    if len(sys.argv) > 1 and sys.argv[1] == "--custom":
-        custom = " ".join(sys.argv[2:]).strip().lower()
-        if not custom:
-            custom = input("  Type your custom niche: ").strip().lower()
-        niches_to_run = [custom]
-        print(f"\n  Custom niche: {custom.upper()}")
-
-    # ── MODE: single niche from menu ──────────────────────────────
-    elif len(sys.argv) > 1 and sys.argv[1] == "--pick":
-        niche = show_niche_menu()
-        niches_to_run = [niche]
-
-    # ── MODE: all niches automatically ───────────────────────────
-    else:
-        all_niches_flat = [n for cat in ALL_NICHES.values() for n in cat]
-        niches_to_run   = all_niches_flat
-        print(f"\n  AUTO MODE — Running all {len(niches_to_run)} niches")
-        print(f"  No prompts. All channels saved for manual review.")
-        print(f"  Press Ctrl+C at any time to stop.\n")
-
-    print(f"\n  Settings:")
-    print(f"    Results/keyword  : {RESULTS_PER_KEYWORD}")
-    print(f"    Parallel workers : {PARALLEL_WORKERS}")
-    print(f"    Age filter       : max {MAX_CHANNEL_AGE_DAYS} days")
-    print(f"    Activity filter  : last video max {MAX_LAST_VIDEO_DAYS} days")
-    print(f"    Scoring only     : no faceless hard reject")
-    print(f"\n{'='*70}\n")
-
-    total_found = 0
-    for i, niche in enumerate(niches_to_run, 1):
-        print(f"\n{'='*70}")
-        print(f"  NICHE [{i}/{len(niches_to_run)}] — {niche.upper()}")
-        print(f"{'='*70}")
-        count = run_niche(conn, niche)
-        total_found += count
-        print(f"\n  Niche complete — {count} channels saved")
-
     print(f"\n{'='*70}")
-    print(f"  ALL DONE")
+    print(f"  COMPLETE — {niche.upper()}")
     print(f"{'='*70}")
-    print(f"  Total channels saved : {total_found}")
-    print(f"  Now open Manual Review to approve golden channels.")
+    print(f"  Keywords searched : {total_kw}")
+    print(f"  Golden this run   : {len(golden_list)}")
+
+    if golden_list:
+        print(f"\n  GOLDEN CHANNELS FOUND")
+        print(f"  {'='*60}")
+        for g in sorted(golden_list, key=lambda x: x["golden_score"], reverse=True):
+            print(f"\n  Channel  : {g['channel_name']}")
+            print(f"  Score    : {g['golden_score']}/100")
+            print(f"  Age      : {g.get('channel_age_days')} days")
+            print(f"  Last vid : {g.get('last_video_days')} days ago")
+            print(f"  Subs     : {g['subscribers']:,}")
+            print(f"  Videos   : {g['video_count']}")
+            print(f"  URL      : {g['channel_url']}")
 
     show_summary(conn)
+    print(f"\n  Data saved to {DB_FILE}")
     conn.close()
 
 

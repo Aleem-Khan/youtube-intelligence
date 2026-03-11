@@ -1,89 +1,86 @@
 @echo off
 color 0A
-title THE GIANT — YouTube Intelligence System
+title THE GIANT
 
 :MENU
 cls
 echo.
 echo  ============================================================
-echo    THE GIANT — YouTube Intelligence System
-echo    Multi-Niche Channel Discovery and Pattern Intelligence
+echo    THE GIANT - YouTube Intelligence System
+echo    Phase 1  -  Discovery and Review
 echo  ============================================================
 echo.
-echo    [1]  Run Discovery         find new channels for any niche
-echo    [2]  Extract Patterns      analyze title and thumbnail formulas
-echo    [3]  Open Dashboard        view all data in browser
-echo    [4]  Database Stats        see what you have collected
-echo    [5]  Push to GitHub        update live dashboard on Vercel
+echo    [1]  Run Discovery         all 20 niches automatically
+echo    [2]  Custom Niche          run one niche of your choice
+echo    [3]  Manual Review         open browser dashboard
+echo    [4]  Database Stats        see totals and niche breakdown
+echo    [5]  Reset Database        wipe everything and start fresh
 echo    [6]  Exit
 echo.
 echo  ============================================================
 echo.
-set /p choice="  Enter your choice (1-6): "
+set /p choice="  Enter choice (1-6): "
 
-if "%choice%"=="1" goto DISCOVER
-if "%choice%"=="2" goto PATTERNS
-if "%choice%"=="3" goto DASHBOARD
+if "%choice%"=="1" goto DISCOVER_ALL
+if "%choice%"=="2" goto DISCOVER_CUSTOM
+if "%choice%"=="3" goto REVIEW
 if "%choice%"=="4" goto STATS
-if "%choice%"=="5" goto PUSH
+if "%choice%"=="5" goto RESET
 if "%choice%"=="6" goto EXIT
 goto MENU
 
 
-:DISCOVER
+:DISCOVER_ALL
 cls
 echo.
 echo  ============================================================
-echo    CHANNEL DISCOVERY
-echo    Type your niche when asked. The system will generate
-echo    300 keywords and search YouTube automatically.
+echo    RUNNING DISCOVERY - All 20 Niches
+echo    Press Ctrl+C to stop at any time
 echo  ============================================================
 echo.
 call venv\Scripts\activate.bat
 python giant.py
 echo.
 echo  ============================================================
-echo    Discovery finished. Press any key to return to menu.
+echo    Done. Go to Manual Review [3] to approve channels.
 echo  ============================================================
-pause >nul
+echo.
+pause
 goto MENU
 
 
-:PATTERNS
+:DISCOVER_CUSTOM
 cls
 echo.
 echo  ============================================================
-echo    PATTERN INTELLIGENCE ENGINE
-echo    Fetches video titles from your golden channels.
-echo    Uses AI to extract title formulas and thumbnail styles.
-echo    Run this after discovery to build your pattern database.
+echo    CUSTOM NICHE DISCOVERY
 echo  ============================================================
+echo.
+set /p niche="  Enter niche name: "
 echo.
 call venv\Scripts\activate.bat
-python pattern_engine.py
+python giant.py --custom %niche%
 echo.
 echo  ============================================================
-echo    Pattern extraction done. Press any key to return.
+echo    Done. Go to Manual Review [3] to approve channels.
 echo  ============================================================
-pause >nul
+echo.
+pause
 goto MENU
 
 
-:DASHBOARD
+:REVIEW
 cls
 echo.
 echo  ============================================================
-echo    OPENING DASHBOARD
+echo    MANUAL REVIEW - Opening browser dashboard
+echo    Press Ctrl+C here when done reviewing
 echo  ============================================================
 echo.
 call venv\Scripts\activate.bat
-python viewer.py
+python review.py
 echo.
-echo  Opening in browser...
-start viewer.html
-echo.
-echo  Press any key to return to menu.
-pause >nul
+pause
 goto MENU
 
 
@@ -102,86 +99,71 @@ try:
     c = conn.cursor()
     c.execute('SELECT COUNT(*) FROM channels')
     total = c.fetchone()[0]
-    c.execute('SELECT COUNT(*) FROM channels WHERE is_golden=1')
+    c.execute(\"SELECT COUNT(*) FROM channels WHERE is_golden=1\")
     golden = c.fetchone()[0]
+    try:
+        c.execute(\"SELECT COUNT(*) FROM channels WHERE review_status='pending'\")
+        pending = c.fetchone()[0]
+        c.execute(\"SELECT COUNT(*) FROM channels WHERE review_status='rejected'\")
+        rejected = c.fetchone()[0]
+    except:
+        pending = rejected = 0
     c.execute('SELECT COUNT(DISTINCT niche) FROM channels')
     niches = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM keywords WHERE searched=1')
+    kw_done = c.fetchone()[0]
     c.execute('SELECT COUNT(*) FROM keywords')
-    kw = c.fetchone()[0]
-    try:
-        c.execute('SELECT COUNT(*) FROM channel_titles')
-        titles = c.fetchone()[0]
-    except:
-        titles = 0
-    try:
-        c.execute('SELECT COUNT(*) FROM title_patterns')
-        tp = c.fetchone()[0]
-    except:
-        tp = 0
-    try:
-        c.execute('SELECT COUNT(*) FROM thumbnail_patterns')
-        thp = c.fetchone()[0]
-    except:
-        thp = 0
+    kw_total = c.fetchone()[0]
     print()
-    print(f'  Total Channels        : {total}')
-    print(f'  Golden Channels       : {golden}')
-    print(f'  Niches Researched     : {niches}')
-    print(f'  Keywords in Database  : {kw}')
-    print(f'  Titles Collected      : {titles}')
-    print(f'  Title Patterns        : {tp}')
-    print(f'  Thumbnail Patterns    : {thp}')
+    print(f'  Total Channels    : {total}')
+    print(f'  Golden (Approved) : {golden}')
+    print(f'  Pending Review    : {pending}')
+    print(f'  Rejected          : {rejected}')
+    print(f'  Niches Active     : {niches}')
+    print(f'  Keywords Done     : {kw_done} / {kw_total}')
     print()
-    c.execute('SELECT niche, COUNT(*), SUM(is_golden) FROM channels GROUP BY niche ORDER BY SUM(is_golden) DESC')
-    rows = c.fetchall()
-    sep = '-' * 52
-    print(f'  {sep}')
-    print(f'  NICHE                            CHANNELS   GOLDEN')
-    print(f'  {sep}')
-    for r in rows:
-        print(f'  {r[0]:<32} {r[1]:>8} {r[2]:>8}')
+    print('  ' + '-'*50)
+    print(f'  {\"NICHE\":<32} {\"TOTAL\":>6}  {\"GOLDEN\":>6}')
+    print('  ' + '-'*50)
+    c.execute('SELECT niche, COUNT(*), SUM(CASE WHEN is_golden=1 THEN 1 ELSE 0 END) FROM channels GROUP BY niche ORDER BY COUNT(*) DESC')
+    for r in c.fetchall():
+        print(f'  {str(r[0]):<32} {r[1]:>6}  {(r[2] or 0):>6}')
     print()
     conn.close()
 except Exception as e:
     print(f'  Error: {e}')
-    print('  Run discovery first.')
+    print('  Run Discovery first.')
 "
 echo.
-echo  ============================================================
-echo  Press any key to return to menu.
-pause >nul
+pause
 goto MENU
 
 
-:PUSH
+:RESET
 cls
 echo.
 echo  ============================================================
-echo    PUSH TO GITHUB — Update Live Dashboard on Vercel
+echo    RESET DATABASE
+echo    WARNING: Deletes all channels and discovery data.
 echo  ============================================================
 echo.
-echo  Step 1: Regenerating dashboard...
-call venv\Scripts\activate.bat
-python viewer.py
+set /p confirm="  Type YES to confirm: "
+if /i "%confirm%"=="YES" (
+    call venv\Scripts\activate.bat
+    python reset_db.py
+    echo.
+    echo  Done. Run Discovery to start fresh.
+) else (
+    echo  Cancelled.
+)
 echo.
-echo  Step 2: Pushing to GitHub...
-git add index.html
-git commit -m "dashboard update %date% %time%"
-git push origin main
-echo.
-echo  ============================================================
-echo  Done! Your live Vercel dashboard has been updated.
-echo  Visit your Vercel URL to see the latest data.
-echo  ============================================================
-echo.
-pause >nul
+pause
 goto MENU
 
 
 :EXIT
-cls
 echo.
-echo  THE GIANT is shutting down.
+echo  Goodbye.
 echo.
 timeout /t 2 >nul
 exit
