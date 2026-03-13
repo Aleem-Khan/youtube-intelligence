@@ -93,6 +93,28 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);display:flex
 .nav-icon{font-size:1rem;width:18px;text-align:center;flex-shrink:0;}
 .nav-badge{margin-left:auto;font-family:var(--mono);font-size:.6rem;background:var(--bg4);border:1px solid var(--border2);color:var(--text2);padding:1px 7px;border-radius:10px;}
 .nav-badge.green{background:#3dd68c18;border-color:#3dd68c44;color:var(--green);}
+.add-page-wrap{flex:1;overflow-y:auto;padding:40px 32px;width:100%;}
+.add-box{max-width:640px;margin:0 auto;width:100%;}
+.add-title{font-size:1.4rem;font-weight:700;color:#fff;margin-bottom:6px;}
+.add-sub{font-family:var(--mono);font-size:.68rem;color:var(--text3);margin-bottom:28px;}
+.add-input-row{display:flex;gap:10px;margin-bottom:16px;}
+.add-input{flex:1;background:var(--bg3);border:1px solid var(--border2);color:#fff;padding:12px 16px;border-radius:10px;font-size:.9rem;font-family:var(--sans);outline:none;transition:border-color .15s;}
+.add-input:focus{border-color:var(--accent);}
+.add-input::placeholder{color:var(--text3);}
+.add-btn{background:var(--accent);color:#fff;border:none;padding:12px 22px;border-radius:10px;font-size:.85rem;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .15s;}
+.add-btn:hover{background:var(--accent2);}
+.add-result{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:18px 20px;display:none;}
+.add-result.show{display:block;}
+.add-result.success{border-color:#3dd68c44;}
+.add-result.exists{border-color:#e8b84b44;}
+.add-result.error{border-color:#e0555544;}
+.add-result-title{font-size:.95rem;font-weight:700;color:#fff;margin-bottom:6px;}
+.add-result-msg{font-family:var(--mono);font-size:.72rem;color:var(--text2);}
+.add-hint{font-family:var(--mono);font-size:.65rem;color:var(--text3);margin-top:10px;line-height:1.7;}
+.manual-list{margin-top:28px;}
+.ml-title{font-family:var(--mono);font-size:.62rem;color:var(--text3);letter-spacing:3px;text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+.ml-title::after{content:'';flex:1;height:1px;background:var(--border);}
+.ml-empty{font-family:var(--mono);font-size:.75rem;color:var(--text3);padding:20px;text-align:center;background:var(--bg3);border:1px solid var(--border);border-radius:10px;}
 .sb-bottom{margin-top:auto;padding:16px 12px;border-top:1px solid var(--border);}
 .sb-time{font-family:var(--mono);font-size:.62rem;color:var(--text3);padding:4px 12px;}
 
@@ -103,16 +125,17 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);display:flex
 .tb-sub{font-family:var(--mono);font-size:.65rem;color:var(--text3);}
 .tb-right{margin-left:auto;display:flex;align-items:center;gap:10px;}
 .tb-stat{font-family:var(--mono);font-size:.68rem;color:var(--text2);background:var(--bg3);border:1px solid var(--border);padding:4px 10px;border-radius:6px;}
-.page{flex:1;display:none;overflow:hidden;}
+.page{flex:1;display:none;overflow:hidden;min-height:0;}
 .page.active{display:flex;flex-direction:column;}
 #page-overview{overflow-y:auto;}
 #page-review{overflow:hidden;}
+#page-add{overflow-y:auto;}
 
 /* OVERVIEW PAGE */
 .ov-header{padding:28px 32px 0;}
 .ov-title{font-size:1.4rem;font-weight:700;color:#fff;margin-bottom:4px;}
 .ov-sub{font-family:var(--mono);font-size:.68rem;color:var(--text3);}
-.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;padding:24px 32px;}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px;padding:24px 32px;}
 .kpi{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px 22px;position:relative;overflow:hidden;}
 .kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent);opacity:.6;}
 .kpi.gold::before{background:var(--gold);}
@@ -142,8 +165,8 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);display:flex
 .progress-fill{height:100%;background:var(--accent);border-radius:2px;}
 
 /* REVIEW PAGE */
-.review-layout{display:flex;flex:1;overflow:hidden;}
-.filter-panel{width:258px;min-width:258px;background:var(--bg2);border-right:1px solid var(--border);overflow-y:auto;padding:18px 14px;display:flex;flex-direction:column;gap:14px;}
+.review-layout{display:flex;flex:1;overflow:hidden;min-height:0;}
+.filter-panel{width:220px;min-width:220px;background:var(--bg2);border-right:1px solid var(--border);overflow-y:auto;padding:14px 12px;display:flex;flex-direction:column;gap:10px;}
 .filter-title{font-family:var(--mono);font-size:.62rem;color:var(--text3);letter-spacing:3px;text-transform:uppercase;}
 .filter-group{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:13px;}
 .fg-label{font-size:.78rem;font-weight:600;color:var(--text);margin-bottom:11px;display:flex;align-items:center;gap:6px;}
@@ -162,26 +185,29 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
 .npill{font-family:var(--mono);font-size:.58rem;padding:3px 8px;border-radius:8px;border:1px solid var(--border2);background:var(--bg4);color:var(--text3);cursor:pointer;transition:all .15s;user-select:none;}
 .npill:hover{border-color:var(--accent);color:var(--text2);}
 .npill.active{background:#6d5acd18;border-color:var(--accent);color:#c4b5fd;}
+.niche-search{width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:7px;padding:7px 10px;color:var(--text);font-family:var(--mono);font-size:.72rem;outline:none;box-sizing:border-box;}
+.niche-search::placeholder{color:var(--text3);}
+.niche-search:focus{border-color:var(--accent);}
 .filter-reset{background:transparent;border:1px solid var(--border2);color:var(--text3);padding:8px;border-radius:8px;font-family:var(--mono);font-size:.63rem;cursor:pointer;width:100%;transition:all .15s;letter-spacing:1px;}
 .filter-reset:hover{border-color:var(--text3);color:var(--text);}
 
 /* REVIEW CONTENT */
-.review-content{flex:1;overflow:hidden;display:flex;flex-direction:column;}
+.review-content{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0;}
 .review-toolbar{padding:13px 18px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;gap:10px;flex-shrink:0;}
 .search-box{background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:7px 13px;border-radius:8px;font-family:var(--sans);font-size:.82rem;outline:none;width:230px;transition:border-color .15s;}
 .search-box:focus{border-color:var(--accent);}
 .search-box::placeholder{color:var(--text3);}
 .sort-select{background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:7px 11px;border-radius:8px;font-family:var(--mono);font-size:.68rem;outline:none;cursor:pointer;}
 .count-label{font-family:var(--mono);font-size:.65rem;color:var(--text3);margin-left:auto;}
-.channel-grid{flex:1;overflow-y:auto;padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:13px;align-content:start;}
+.channel-grid{flex:1;overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;align-items:start;align-content:start;grid-auto-rows:max-content;}
 
 /* CARD */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:all .15s;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;transition:all .15s;display:flex;flex-direction:column;height:auto;align-self:start;}
 .card:hover{border-color:var(--border2);transform:translateY(-1px);}
 .card[data-status="golden"]{border-color:#e8b84b28;}
 .card[data-status="rejected"]{opacity:.35;}
 .card-top{padding:13px 13px 0;display:flex;align-items:flex-start;gap:11px;}
-.ch-avatar{width:38px;height:38px;border-radius:50%;background:var(--bg4);border:1px solid var(--border2);object-fit:cover;flex-shrink:0;}
+.ch-avatar-init{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#6d5acd,#4c1d95);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;font-size:.9rem;font-weight:800;color:#fff;flex-shrink:0;}
 .ch-info{flex:1;min-width:0;}
 .ch-name{font-size:.87rem;font-weight:600;color:var(--accent2);text-decoration:none;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ch-name:hover{color:#fff;}
@@ -253,6 +279,13 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
     <div class="nav-item" style="opacity:.3;cursor:not-allowed">
       <span class="nav-icon">✦</span><span>Title Generator</span>
       <span class="nav-badge">P4</span>
+    </div>
+  </div>
+
+  <div class="sb-section">
+    <div class="sb-label">My Channels</div>
+    <div class="nav-item" onclick="showPage('add',this)" id="nav-add">
+      <span class="nav-icon">➕</span><span>Add Channel</span>
     </div>
   </div>
 
@@ -337,88 +370,22 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
         </div>
 
         <div class="filter-group">
-          <div class="fg-label">👥 Subscribers</div>
-          <div class="range-row">
-            <div class="range-labels"><span>Min</span><span class="range-val" id="subs-min-val">0</span></div>
-            <input type="range" id="subs-min" min="0" max="500" value="0" oninput="updateRange('subs')">
-          </div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Max</span><span class="range-val" id="subs-max-val">500K</span></div>
-            <input type="range" id="subs-max" min="0" max="500" value="500" oninput="updateRange('subs')">
-          </div>
-        </div>
-
-        <div class="filter-group">
           <div class="fg-label">⭐ Score</div>
-          <div class="range-row">
-            <div class="range-labels"><span>Min</span><span class="range-val" id="score-min-val">0</span></div>
-            <input type="range" id="score-min" min="0" max="100" value="0" oninput="updateRange('score')">
-          </div>
           <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Max</span><span class="range-val" id="score-max-val">100</span></div>
+            <div class="range-labels"><span>Range</span><span class="range-val" id="score-val">0 – 100</span></div>
+            <input type="range" id="score-min" min="0" max="100" value="0"   oninput="updateRange('score')" style="margin-bottom:4px">
             <input type="range" id="score-max" min="0" max="100" value="100" oninput="updateRange('score')">
           </div>
         </div>
 
         <div class="filter-group">
-          <div class="fg-label">🤖 Faceless AI %</div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Minimum</span><span class="range-val" id="face-min-val">0%</span></div>
-            <input type="range" id="face-min" min="0" max="100" value="0" oninput="updateRange('face')">
-          </div>
-        </div>
-
-        <div class="filter-group">
-          <div class="fg-label">🎬 Total Videos</div>
-          <div class="range-row">
-            <div class="range-labels"><span>Min</span><span class="range-val" id="vids-min-val">0</span></div>
-            <input type="range" id="vids-min" min="0" max="200" value="0" oninput="updateRange('vids')">
-          </div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Max</span><span class="range-val" id="vids-max-val">200+</span></div>
-            <input type="range" id="vids-max" min="0" max="200" value="200" oninput="updateRange('vids')">
-          </div>
-        </div>
-
-        <div class="filter-group">
-          <div class="fg-label">📅 Channel Age</div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Max Age</span><span class="range-val" id="age-max-val">365d</span></div>
-            <input type="range" id="age-max" min="1" max="365" value="365" oninput="updateRange('age')">
-          </div>
-        </div>
-
-        <div class="filter-group">
-          <div class="fg-label">🕐 Last Upload</div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Max days ago</span><span class="range-val" id="last-max-val">40d</span></div>
-            <input type="range" id="last-max" min="0" max="40" value="40" oninput="updateRange('last')">
-          </div>
-        </div>
-
-        <div class="filter-group">
-          <div class="fg-label">🔥 Recent Views</div>
-          <div class="range-row" style="margin-bottom:0">
-            <div class="range-labels"><span>Minimum</span><span class="range-val" id="recent-min-val">0</span></div>
-            <input type="range" id="recent-min" min="0" max="100" value="0" oninput="updateRange('recent')">
-          </div>
-        </div>
-
-        <div class="filter-group">
-          <div class="fg-label">🤖 Faceless Confirmed</div>
-          <div class="status-pills">
-            <div class="spill active" onclick="toggleFaceless('all',this)">All</div>
-            <div class="spill s-gold" onclick="toggleFaceless('yes',this)">✓ Faceless Only</div>
-            <div class="spill s-red"  onclick="toggleFaceless('no',this)">✕ Not Faceless</div>
-          </div>
-        </div>
-
-        <div class="filter-group">
           <div class="fg-label">🗂 Niche</div>
-          <div class="niche-pills" id="niche-pills"></div>
+          <input class="niche-search" id="niche-search" type="text"
+                 placeholder="e.g. history, finance..."
+                 oninput="applyFilters()">
         </div>
 
-        <button class="filter-reset" onclick="resetFilters()">↺ Reset All Filters</button>
+        <button class="filter-reset" onclick="resetFilters()">↺ Reset Filters</button>
       </div>
 
       <div class="review-content">
@@ -438,6 +405,36 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;heigh
         <div class="channel-grid" id="channel-grid"></div>
       </div>
 
+    </div>
+  </div>
+
+  <!-- ADD CHANNEL PAGE -->
+  <div class="page" id="page-add">
+    <div class="add-page-wrap">
+      <div class="add-box">
+        <div class="add-title">➕ Add Channel Manually</div>
+        <div class="add-sub">Paste a YouTube channel URL you discovered yourself — it goes straight to Golden list</div>
+        <div class="add-input-row">
+          <input class="add-input" id="add-url-input" type="text"
+                 placeholder="https://www.youtube.com/channel/UC... or @handle or /c/name"
+                 onkeydown="if(event.key==='Enter') addChannel()">
+          <button class="add-btn" onclick="addChannel()">Add to Golden</button>
+        </div>
+        <div class="add-hint">
+          Accepted formats:<br>
+          https://www.youtube.com/channel/UCxxxxxx<br>
+          https://www.youtube.com/@channelhandle<br>
+          https://www.youtube.com/c/channelname
+        </div>
+        <div class="add-result" id="add-result">
+          <div class="add-result-title" id="add-result-title"></div>
+          <div class="add-result-msg"  id="add-result-msg"></div>
+        </div>
+        <div class="manual-list">
+          <div class="ml-title">Manually Added Golden Channels</div>
+          <div id="manual-golden-list"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -469,10 +466,73 @@ function showPage(page, el) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('page-' + page).classList.add('active');
   el.classList.add('active');
-  const t = {overview:['Overview','Platform summary'],review:['Channel Review','Browse and approve channels']};
-  document.getElementById('tb-title').textContent = t[page][0];
-  document.getElementById('tb-sub').textContent   = t[page][1];
+  const t = {
+    overview:['Overview','Platform summary'],
+    review:['Channel Review','Browse and approve channels'],
+    add:['Add Channel','Manually add channels you discovered']
+  };
+  document.getElementById('tb-title').textContent = t[page]?t[page][0]:'';
+  document.getElementById('tb-sub').textContent   = t[page]?t[page][1]:'';
   if (page === 'review') applyFilters();
+  if (page === 'add') renderManualGolden();
+}
+
+function renderManualGolden() {
+  const manual = ALL.filter(c => c.manual_add === 1 || c.discovered_via === 'manual');
+  const el = document.getElementById('manual-golden-list');
+  if (!manual.length) {
+    el.innerHTML = '<div class="ml-empty">No manually added channels yet</div>';
+    return;
+  }
+  el.innerHTML = manual.map(ch => {
+    const url = ch.channel_url || '';
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="card-top">
+        <div class="ch-avatar-init">${(ch.channel_name||'?')[0].toUpperCase()}</div>
+        <div class="ch-info">
+          <a class="ch-name" href="${url}" target="_blank">${ch.channel_name||'Unknown'}</a>
+          <div class="ch-niche">${ch.niche||'manually added'}</div>
+        </div>
+        <span class="ch-badge badge-golden">★ Golden</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function addChannel() {
+  const input = document.getElementById('add-url-input');
+  const url   = input.value.trim();
+  if (!url) { showAddResult('error','Please paste a YouTube channel URL',''); return; }
+
+  showAddResult('info','Checking channel...','');
+  try {
+    const r = await fetch('http://localhost:7842/add?url=' + encodeURIComponent(url));
+    const d = await r.json();
+    if (d.exists) {
+      showAddResult('exists', '⚠ Channel Already Exists',
+        `"${d.channel_name}" is already in your database with status: ${d.status}`);
+    } else if (d.ok) {
+      showAddResult('success', '★ Added to Golden List',
+        `"${d.channel_name}" has been added as a Golden channel`);
+      // Add to local ALL array so it shows immediately
+      ALL.push(d.channel);
+      input.value = '';
+      updateTopbar();
+      renderManualGolden();
+      showToast('★ Channel added to Golden!');
+    } else {
+      showAddResult('error', '✕ Failed', d.error || 'Could not add channel. Check the URL.');
+    }
+  } catch(e) {
+    showAddResult('error', '✕ Server offline', 'Make sure review.py is running');
+  }
+}
+
+function showAddResult(type, title, msg) {
+  const el = document.getElementById('add-result');
+  el.className = 'add-result show ' + type;
+  document.getElementById('add-result-title').textContent = title;
+  document.getElementById('add-result-msg').textContent   = msg;
 }
 
 function updateTopbar() {
@@ -529,34 +589,10 @@ function fmtSubs(v) {
 }
 
 function updateRange(type) {
-  if (type==='subs') {
-    document.getElementById('subs-min-val').textContent = fmtSubs(sliderToSubs(+document.getElementById('subs-min').value));
-    document.getElementById('subs-max-val').textContent = fmtSubs(sliderToSubs(+document.getElementById('subs-max').value));
-  }
   if (type==='score') {
-    document.getElementById('score-min-val').textContent = document.getElementById('score-min').value;
-    document.getElementById('score-max-val').textContent = document.getElementById('score-max').value;
-  }
-  if (type==='face') {
-    document.getElementById('face-min-val').textContent = document.getElementById('face-min').value + '%';
-  }
-  if (type==='vids') {
-    const mx = +document.getElementById('vids-max').value;
-    document.getElementById('vids-min-val').textContent = document.getElementById('vids-min').value;
-    document.getElementById('vids-max-val').textContent = mx>=200 ? '200+' : mx;
-  }
-  if (type==='age') {
-    document.getElementById('age-max-val').textContent = document.getElementById('age-max').value + 'd';
-  }
-  if (type==='last') {
-    const v = +document.getElementById('last-max').value;
-    document.getElementById('last-max-val').textContent = v>=40 ? 'Any' : v+'d';
-  }
-  if (type==='recent') {
-    const v = +document.getElementById('recent-min').value;
-    // slider 0-100 maps to 0-100K views
-    const views = v * 1000;
-    document.getElementById('recent-min-val').textContent = v===0 ? '0' : fmtSubs(views);
+    const mn = document.getElementById('score-min').value;
+    const mx = document.getElementById('score-max').value;
+    document.getElementById('score-val').textContent = mn + ' – ' + mx;
   }
   applyFilters();
 }
@@ -580,57 +616,32 @@ function resetFilters() {
     if (first) first.classList.add('active');
   });
   document.querySelectorAll('.npill').forEach(p=>p.classList.remove('active'));
-  document.getElementById('subs-min').value=0;   document.getElementById('subs-max').value=500;
-  document.getElementById('score-min').value=0;  document.getElementById('score-max').value=100;
-  document.getElementById('face-min').value=0;
-  document.getElementById('vids-min').value=0;   document.getElementById('vids-max').value=200;
-  document.getElementById('age-max').value=365;
-  document.getElementById('last-max').value=40;
-  document.getElementById('recent-min').value=0;
+  document.getElementById('score-min').value=0;
+  document.getElementById('score-max').value=100;
   document.getElementById('search-input').value='';
-  ['subs','score','face','vids','age','last','recent'].forEach(t=>updateRange(t));
+  document.getElementById('niche-search').value='';
+  updateRange('score');
   applyFilters();
 }
 
 function applyFilters() {
-  const search    = document.getElementById('search-input').value.toLowerCase();
-  const sort      = document.getElementById('sort-select').value;
-  const subsMin   = sliderToSubs(+document.getElementById('subs-min').value);
-  const subsMax   = sliderToSubs(+document.getElementById('subs-max').value);
-  const scoreMin  = +document.getElementById('score-min').value;
-  const scoreMax  = +document.getElementById('score-max').value;
-  const faceMin   = +document.getElementById('face-min').value;
-  const vidsMin   = +document.getElementById('vids-min').value;
-  const vidsMax   = +document.getElementById('vids-max').value;
-  const ageMax    = +document.getElementById('age-max').value;
-  const lastMax   = +document.getElementById('last-max').value;
-  const recentMin = +document.getElementById('recent-min').value * 1000;
+  const search   = document.getElementById('search-input').value.toLowerCase();
+  const sort     = document.getElementById('sort-select').value;
+  const scoreMin = +document.getElementById('score-min').value;
+  const scoreMax = +document.getElementById('score-max').value;
+
+  const nicheQ = document.getElementById('niche-search').value.toLowerCase().trim();
 
   let filtered = ALL.filter(ch => {
-    const status    = ch.review_status||'pending';
-    const subs      = ch.subscribers||0;
-    const score     = ch.golden_score||0;
-    const face      = ch.faceless_score||0;
-    const vids      = ch.video_count||0;
-    const age       = ch.channel_age_days||0;
-    const last      = ch.last_video_days!=null ? ch.last_video_days : 999;
-    const recent    = ch.recent_views||0;
-    const isFaceless = ch.is_faceless||0;
-    const name      = (ch.channel_name||'').toLowerCase();
+    const status = ch.review_status||'pending';
+    const score  = ch.golden_score||0;
+    const name   = (ch.channel_name||'').toLowerCase();
+    const niche  = (ch.niche||'').toLowerCase();
 
     if (activeStatus!=='all' && status!==activeStatus) return false;
-    if (activeNiches.size>0 && !activeNiches.has(ch.niche||'')) return false;
     if (search && !name.includes(search)) return false;
-    if (subs<subsMin || subs>subsMax) return false;
     if (score<scoreMin || score>scoreMax) return false;
-    if (face<faceMin) return false;
-    if (vids<vidsMin) return false;
-    if (vidsMax<200 && vids>vidsMax) return false;
-    if (age>ageMax) return false;
-    if (lastMax<40 && last>lastMax) return false;
-    if (recentMin>0 && recent<recentMin) return false;
-    if (facelessFilter==='yes' && !isFaceless) return false;
-    if (facelessFilter==='no'  &&  isFaceless) return false;
+    if (nicheQ && !niche.includes(nicheQ)) return false;
     return true;
   });
 
@@ -664,7 +675,7 @@ function renderCards(channels) {
     const vids  = ch.video_count||0;
     const last  = ch.last_video_days!=null ? ch.last_video_days+'d ago' : '?';
     const face  = ch.faceless_score||0;
-    const rec   = fmt(ch.recent_views);
+    const avgv  = (ch.video_count&&ch.video_count>0) ? fmt(Math.round((ch.total_views||0)/ch.video_count)) : '—';
     const st    = ch.review_status||'pending';
     const sc    = score>=60?'var(--green)':score>=40?'var(--gold)':'var(--text2)';
     const fc    = face>=70?'var(--green)':face>=40?'var(--gold)':'var(--red)';
@@ -673,8 +684,7 @@ function renderCards(channels) {
                     rejected:'<span class="ch-badge badge-rejected">✕ Rejected</span>'};
     return `<div class="card" id="card-${cid}" data-status="${st}">
       <div class="card-top">
-        <img class="ch-avatar" src="https://yt3.googleusercontent.com/channel/${cid}"
-             onerror="this.style.display='none'" alt="">
+        <div class="ch-avatar-init">${(name[0]||'?').toUpperCase()}</div>
         <div class="ch-info">
           <a class="ch-name" href="${url}" target="_blank">${name}</a>
           <div class="ch-niche">${ch.niche||'—'}</div>
@@ -690,7 +700,7 @@ function renderCards(channels) {
       <div class="card-meta">
         <div class="meta-cell"><div class="meta-val">${age}</div><div class="meta-lbl">Age</div></div>
         <div class="meta-cell"><div class="meta-val">${last}</div><div class="meta-lbl">Last Upload</div></div>
-        <div class="meta-cell"><div class="meta-val">${rec}</div><div class="meta-lbl">Recent Views</div></div>
+        <div class="meta-cell"><div class="meta-val">${avgv}</div><div class="meta-lbl">Avg Views</div></div>
       </div>
       <div class="card-actions">
         <button class="act-btn act-open"   onclick="window.open('${url}','_blank')">▶ Open</button>
@@ -706,6 +716,12 @@ function fmt(n) {
   if (!n) return '—'; n=parseInt(n);
   if (n>=1000000) return (n/1000000).toFixed(1)+'M';
   if (n>=1000)    return (n/1000).toFixed(1)+'K';
+  return n;
+}
+function fmtK(n) {
+  n=parseInt(n)||0;
+  if (n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if (n>=1000)    return (n/1000).toFixed(0)+'K';
   return n;
 }
 
@@ -739,6 +755,276 @@ init();
 </html>"""
 
 # ================================================================
+#  BACKGROUND SUPABASE SYNC
+# ================================================================
+def _bg_sync():
+    try:
+        from supabase_sync import sync_to_supabase
+        sync_to_supabase(verbose=False)
+        print("  [SYNC] Cloud sync complete")
+    except Exception:
+        pass  # Supabase not configured — silent skip
+
+
+# ================================================================
+#  ADD CHANNEL MANUALLY
+# ================================================================
+def extract_channel_id_from_url(url):
+    """Extract channel ID or identifier from any YouTube URL format"""
+    import re
+    url = url.strip()
+    # UC... format direct
+    m = re.search(r'channel/(UC[A-Za-z0-9_-]{20,})', url)
+    if m: return m.group(1), 'id'
+    # @handle
+    m = re.search(r'@([A-Za-z0-9_.-]+)', url)
+    if m: return m.group(1), 'handle'
+    # /c/name
+    m = re.search(r'/c/([A-Za-z0-9_.-]+)', url)
+    if m: return m.group(1), 'custom'
+    # /user/name
+    m = re.search(r'/user/([A-Za-z0-9_.-]+)', url)
+    if m: return m.group(1), 'user'
+    return None, None
+
+
+def _detect_niche_with_ai(channel_name, description, video_titles):
+    """Ask AI to classify which niche this channel belongs to."""
+    try:
+        from ai_router import call_ai
+        titles_str = ", ".join(video_titles[:10]) if video_titles else "N/A"
+        prompt = f"""You are a YouTube niche classifier.
+
+Channel Name: {channel_name}
+Description: {description[:300] if description else "N/A"}
+Recent Video Titles: {titles_str}
+
+Choose the single best matching niche from this list:
+HISTORY & MYSTERIES, TRUE CRIME & DARK, PSYCHOLOGY & MIND, SCIENCE & SPACE,
+FINANCE & MONEY, MOTIVATION & MINDSET, PHILOSOPHY & WISDOM, GEOPOLITICS & POWER,
+HEALTH & LONGEVITY, DARK BIOGRAPHIES, TECHNOLOGY & FUTURE, RELIGION & SPIRITUALITY,
+NATURE & ANIMALS, ECONOMICS & SOCIETY, WAR & MILITARY, HUMAN BEHAVIOR & DARK PSYCHOLOGY,
+MICRO HISTORY & DIGITAL ARCHAEOLOGY, RESTORATION & SATISFYING, NICHE TECH TUTORIALS,
+GEOPOLITICAL STORYTELLING, AMBIENT & LOFI, CORPORATE SCANDALS
+
+Reply with ONLY the niche name exactly as written above. Nothing else."""
+        result = call_ai(prompt, verbose=False).strip()
+        # Validate it returned one of our niches
+        valid = [
+            "HISTORY & MYSTERIES","TRUE CRIME & DARK","PSYCHOLOGY & MIND","SCIENCE & SPACE",
+            "FINANCE & MONEY","MOTIVATION & MINDSET","PHILOSOPHY & WISDOM","GEOPOLITICS & POWER",
+            "HEALTH & LONGEVITY","DARK BIOGRAPHIES","TECHNOLOGY & FUTURE","RELIGION & SPIRITUALITY",
+            "NATURE & ANIMALS","ECONOMICS & SOCIETY","WAR & MILITARY","HUMAN BEHAVIOR & DARK PSYCHOLOGY",
+            "MICRO HISTORY & DIGITAL ARCHAEOLOGY","RESTORATION & SATISFYING","NICHE TECH TUTORIALS",
+            "GEOPOLITICAL STORYTELLING","AMBIENT & LOFI","CORPORATE SCANDALS"
+        ]
+        for v in valid:
+            if v in result.upper():
+                return v
+        return result  # return whatever AI said if no match
+    except Exception:
+        return "UNCATEGORIZED"
+
+
+def handle_add_channel(raw_url):
+    if not raw_url:
+        return {"ok": False, "error": "No URL provided"}
+
+    identifier, id_type = extract_channel_id_from_url(raw_url)
+    if not identifier:
+        return {"ok": False, "error": "Could not parse YouTube URL. Use /channel/UC... or /@handle format"}
+
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    c = conn.cursor()
+
+    # Build channel URL
+    if id_type == 'id':
+        channel_url = f"https://www.youtube.com/channel/{identifier}"
+    else:
+        channel_url = raw_url.strip()
+
+    # ── Step 1: Scrape full channel data with yt-dlp ──────────────
+    channel_name  = identifier
+    channel_id    = identifier if id_type == 'id' else f"manual_{identifier}"
+    description   = ""
+    subs          = 0
+    vid_count     = 0
+    total_views   = 0
+    video_titles  = []
+    age_days      = None
+    last_video_days = None
+    handle        = identifier if id_type == 'handle' else ""
+
+    try:
+        import yt_dlp, requests as _req, os
+        from datetime import datetime, timezone
+        from dotenv import load_dotenv
+        load_dotenv()
+        _YT_KEY = os.getenv("YOUTUBE_API_KEY")
+        now_dt  = datetime.now(timezone.utc)
+
+        # ── Step 1: resolve channel_id from handle/custom URL ─────
+        if id_type != 'id' or not channel_id.startswith("UC"):
+            opts = {"quiet":True,"no_warnings":True,"extract_flat":True,
+                    "playlistend":1,"ignoreerrors":True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info0 = ydl.extract_info(channel_url, download=False) or {}
+            real_id0 = info0.get("channel_id","")
+            if real_id0.startswith("UC"):
+                channel_id  = real_id0
+                channel_url = f"https://www.youtube.com/channel/{real_id0}"
+
+        # ── Step 2: YouTube Data API v3 — exact data ──────────────
+        if _YT_KEY and channel_id.startswith("UC"):
+
+            # channels.list — 1 quota unit
+            r1 = _req.get("https://www.googleapis.com/youtube/v3/channels", params={
+                "key":  _YT_KEY,
+                "id":   channel_id,
+                "part": "snippet,statistics,contentDetails",
+            }, timeout=10)
+            d1 = r1.json().get("items",[])
+            if d1:
+                item     = d1[0]
+                snip     = item.get("snippet",{})
+                stats    = item.get("statistics",{})
+                content  = item.get("contentDetails",{})
+
+                channel_name = snip.get("title", channel_name)
+                description  = snip.get("description","")
+                subs         = int(stats.get("subscriberCount",0) or 0)
+                vid_count    = int(stats.get("videoCount",0) or 0)
+                total_views  = int(stats.get("viewCount",0) or 0)
+
+                # Exact channel age from creation date
+                created_at = snip.get("publishedAt","")
+                if created_at:
+                    try:
+                        created_dt = datetime.fromisoformat(created_at.replace("Z","+00:00"))
+                        age_days = (now_dt - created_dt).days
+                    except Exception:
+                        pass
+
+                # uploads playlist → get recent videos
+                uploads_pl = content.get("relatedPlaylists",{}).get("uploads","")
+                if uploads_pl:
+                    r2 = _req.get("https://www.googleapis.com/youtube/v3/playlistItems", params={
+                        "key":        _YT_KEY,
+                        "playlistId": uploads_pl,
+                        "part":       "snippet",
+                        "maxResults": 10,
+                    }, timeout=10)
+                    vitems = r2.json().get("items",[])
+                    video_titles = [v.get("snippet",{}).get("title","") for v in vitems if v.get("snippet",{}).get("title")]
+
+                    # Last upload date from most recent video
+                    if vitems:
+                        pub_at = vitems[0].get("snippet",{}).get("publishedAt","")
+                        if pub_at:
+                            try:
+                                last_dt = datetime.fromisoformat(pub_at.replace("Z","+00:00"))
+                                last_video_days = (now_dt - last_dt).days
+                            except Exception:
+                                pass
+
+                print(f"  [ADD] API OK: {channel_name} | {subs} subs | {vid_count} videos | age {age_days}d | last {last_video_days}d ago")
+
+        else:
+            # ── Fallback: yt-dlp ─────────────────────────────────
+            opts = {"quiet":True,"no_warnings":True,"extract_flat":True,
+                    "playlistend":10,"ignoreerrors":True}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(channel_url + "/videos", download=False) or {}
+            entries = [e for e in info.get("entries",[]) if e]
+            video_titles = [e.get("title","") for e in entries if e.get("title")]
+            if entries:
+                up = entries[0].get("upload_date","")
+                if len(up) == 8:
+                    try:
+                        last_video_days = (now_dt - datetime.strptime(up,"%Y%m%d").replace(tzinfo=timezone.utc)).days
+                    except Exception: pass
+            print(f"  [ADD] yt-dlp fallback: {channel_name} | {subs} subs | {len(video_titles)} titles")
+
+    except Exception as e:
+        import traceback
+        print(f"  [ADD] scrape error: {e}")
+        traceback.print_exc()
+
+    # ── Step 2: Duplicate check using real channel_id ─────────────
+    c.execute("SELECT * FROM channels WHERE channel_id=?", (channel_id,))
+    existing = c.fetchone()
+    if not existing and handle:
+        c.execute("SELECT * FROM channels WHERE channel_handle=?", (handle,))
+        existing = c.fetchone()
+    if existing:
+        conn.close()
+        return {
+            "ok": False, "exists": True,
+            "channel_name": existing["channel_name"],
+            "status": existing["review_status"]
+        }
+
+    # ── Step 3: AI Niche Detection ────────────────────────────────
+    print(f"  [ADD] Detecting niche for: {channel_name}")
+    niche = _detect_niche_with_ai(channel_name, description, video_titles)
+    print(f"  [ADD] Niche detected: {niche}")
+
+    # ── Step 4: Faceless detection ────────────────────────────────
+    try:
+        from faceless_detector import detect_faceless_full
+        is_faceless, faceless_score = detect_faceless_full(
+            channel_name=channel_name,
+            description=description,
+            video_titles=video_titles,
+        )
+    except Exception:
+        is_faceless, faceless_score = False, 0
+
+    # Insert as golden channel
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    ch = {
+        "channel_id":       channel_id,
+        "channel_name":     channel_name,
+        "channel_url":      channel_url,
+        "niche":            niche,
+        "subscribers":      subs,
+        "total_views":      total_views,
+        "video_count":      vid_count,
+        "discovered_via":   "manual",
+        "golden_score":     100,
+        "is_golden":        1,
+        "is_faceless":      1 if is_faceless else 0,
+        "faceless_score":   faceless_score,
+        "channel_age_days": age_days,
+        "last_video_days":  last_video_days,
+        "date_found":       now,
+        "review_status":    "golden",
+        "recent_views":     0,
+        "description":      description[:500],
+        "channel_handle":   handle,
+    }
+
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO channels VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ch["channel_id"],ch["channel_name"],ch["channel_url"],ch["niche"],
+             ch["subscribers"],ch["total_views"],ch["video_count"],ch["discovered_via"],
+             ch["golden_score"],ch["is_golden"],ch["is_faceless"],ch["faceless_score"],
+             ch["channel_age_days"],ch["last_video_days"],ch["date_found"],
+             ch["review_status"],ch["recent_views"],ch["description"],ch["channel_handle"])
+        )
+        conn.commit()
+        conn.close()
+        print(f"  [ADD] Manually added: {channel_name}")
+        return {"ok": True, "channel_name": channel_name, "channel": ch}
+    except Exception as e:
+        conn.close()
+        return {"ok": False, "error": str(e)}
+
+
+# ================================================================
 #  REVIEW API SERVER
 # ================================================================
 def run_review_server():
@@ -764,7 +1050,16 @@ def run_review_server():
                 name = row[0] if row else cid
                 icon = "★ GOLDEN" if status=="golden" else "✕ Reject" if status=="rejected" else "↺ Reset"
                 print(f"  {icon:10} → {name}")
+
+                # Sync to Supabase in background (non-blocking)
+                if status == "golden":
+                    threading.Thread(target=_bg_sync, daemon=True).start()
+
                 self._j({"ok":True,"channel":name,"status":status})
+            elif parsed.path == "/add":
+                raw_url = params.get("url", [""])[0]
+                result  = handle_add_channel(raw_url)
+                self._j(result)
             else:
                 self._j({"ok":False})
 
@@ -795,10 +1090,6 @@ if __name__ == "__main__":
     print("\n" + "="*52)
     print("  THE GIANT — Intelligence Platform")
     print("="*52)
-
-    if not channels:
-        print("\n  No channels. Run discovery first.")
-        exit()
 
     html = generate_html(channels)
     with open("review.html","w",encoding="utf-8") as f:

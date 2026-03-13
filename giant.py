@@ -8,12 +8,13 @@ from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from faceless_detector import detect_faceless_full
 from config import (
-    GROQ_API_KEY, DB_FILE, GROQ_MODEL,
+    GROQ_API_KEY, DB_FILE, GROQ_MODEL, GROQ_MODEL_FAST,
     RESULTS_PER_KEYWORD, PARALLEL_WORKERS,
     GOLDEN_SCORE_MIN, PROMISING_SCORE_MIN,
     MAX_SUBSCRIBERS, MIN_SUBSCRIBERS,
     MAX_CHANNEL_AGE_DAYS, MAX_LAST_VIDEO_DAYS
 )
+from ai_router import call_ai
 
 # ================================================================
 #  ALL NICHES — 100+ categories covering every major faceless niche
@@ -480,25 +481,52 @@ def init_db():
         channel_age_days  INTEGER,
         last_video_days   INTEGER,
         date_found        TEXT,
-        review_status     TEXT DEFAULT 'pending'
+        review_status     TEXT DEFAULT 'pending',
+        recent_views      INTEGER DEFAULT 0,
+        description       TEXT,
+        channel_handle    TEXT
     )''')
 
-    # Add review_status to existing databases that don't have it
-    try:
-        c.execute("ALTER TABLE channels ADD COLUMN review_status TEXT DEFAULT 'pending'")
-    except Exception:
-        pass
+    # ── Auto-migrate existing databases ──────────────────────────
+    migrations = [
+        "ALTER TABLE channels ADD COLUMN review_status TEXT DEFAULT 'pending'",
+        "ALTER TABLE channels ADD COLUMN recent_views INTEGER DEFAULT 0",
+        "ALTER TABLE channels ADD COLUMN description TEXT",
+        "ALTER TABLE channels ADD COLUMN channel_handle TEXT",
+    ]
+    for sql in migrations:
+        try:
+            c.execute(sql)
+        except Exception:
+            pass  # column already exists
 
     c.execute('''CREATE TABLE IF NOT EXISTS videos (
-        video_id    TEXT PRIMARY KEY,
-        channel_id  TEXT,
-        niche       TEXT,
-        title       TEXT,
-        views       INTEGER,
-        upload_date TEXT,
-        duration    INTEGER,
-        url         TEXT,
-        video_score REAL DEFAULT 0
+        video_id      TEXT PRIMARY KEY,
+        channel_id    TEXT,
+        niche         TEXT,
+        title         TEXT,
+        views         INTEGER,
+        likes         INTEGER DEFAULT 0,
+        comments      INTEGER DEFAULT 0,
+        upload_date   TEXT,
+        duration      INTEGER,
+        url           TEXT,
+        thumbnail_url TEXT,
+        description   TEXT,
+        tags          TEXT,
+        video_score   REAL DEFAULT 0,
+        outlier_score REAL DEFAULT 0,
+        date_scraped  TEXT
+    )''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS patterns (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        niche         TEXT,
+        pattern_type  TEXT,
+        pattern_value TEXT,
+        frequency     INTEGER DEFAULT 1,
+        avg_views     INTEGER DEFAULT 0,
+        date_found    TEXT
     )''')
 
     conn.commit()
@@ -557,23 +585,8 @@ def show_niche_menu():
 
 
 # ================================================================
-#  GROQ AI — KEYWORD GENERATION
+#  AI KEYWORD GENERATION  —  uses ai_router (Groq → Gemini fallback)
 # ================================================================
-def call_groq(prompt):
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type":  "application/json"
-    }
-    payload = {
-        "model":       GROQ_MODEL,
-        "messages":    [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
-        "max_tokens":  4000
-    }
-    resp = requests.post(url, headers=headers, json=payload)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
 
 
 def generate_keywords(niche):
@@ -612,7 +625,7 @@ Create 12 subtopics specific to: {niche}
 Each subtopic must have exactly 25 keywords.
 Total must be 300 keywords."""
 
-    raw   = call_groq(prompt)
+    raw   = call_ai(prompt)
     raw   = raw.strip()
     start = raw.find("{")
     end   = raw.rfind("}") + 1
@@ -1012,37 +1025,14 @@ def score_channel(channel, niche, conn=None):
     now = datetime.now(timezone.utc)
 
     try:
-        # ── Try YouTube API first (clean accurate data) ───────────
-        from youtube_api import get_full_channel_data, YT_API_KEY
-        api_data = None
-
-        # Extract channel ID from URL
+        # ── yt-dlp scraping ───────────────────────────────────────
         real_cid = channel.get("channel_id", "")
         url_match = re.search(r"channel/(UC[A-Za-z0-9_-]{20,})", channel["channel_url"])
         if url_match:
             real_cid = url_match.group(1)
 
-        if YT_API_KEY and real_cid.startswith("UC"):
-            api_data = get_full_channel_data(real_cid)
-            if not api_data:
-                pass  # Silent fallback to scraping
-
-        if api_data:
-            # ── CLEAN DATA FROM API ───────────────────────────────
-            name          = api_data["channel_name"]
-            desc          = api_data["description"]
-            subs          = api_data["subscribers"]
-            vid_count     = api_data["video_count"]
-            view_count    = api_data["total_views"]
-            age_days      = api_data["age_days"]
-            last_video_days = api_data["last_video_days"]
-            recent_views  = api_data["recent_views"]
-            video_titles  = api_data["video_titles"]
-            avg_duration  = api_data["avg_video_duration"]
-            uploads_pm    = api_data["uploads_per_month"]
-            avg_engage    = api_data["avg_engagement"]
-        else:
-            # ── FALLBACK: yt-dlp scraping ─────────────────────────
+        if True:
+            # ── yt-dlp scraping ───────────────────────────────────
             ydl_flat = {
                 "quiet": True, "no_warnings": True,
                 "extract_flat": True, "playlistend": 1,
@@ -1130,56 +1120,51 @@ def score_channel(channel, niche, conn=None):
                 return 0.0
             return foreign_count / letter_count
 
-        # ── HARD FILTERS — only obvious junk rejected ────────────────
-        # Subscriber range
-        if subs > MAX_SUBSCRIBERS or (subs > 0 and subs < MIN_SUBSCRIBERS):
-            return None
-
-        # Age filter
-        if age_days is not None and age_days > MAX_CHANNEL_AGE_DAYS:
-            return None
-
-        # Last video filter — must be active
-        if last_video_days is not None and last_video_days > MAX_LAST_VIDEO_DAYS:
-            return None
-
-        # Reject completely empty channels
+        # ── FILTERS ──────────────────────────────────────────────────
+        # Reject zero-data channels
         if subs == 0 and vid_count == 0:
             return None
 
-        # Slow grower: 100+ videos under 50k subs = not interesting
-        if vid_count > 100 and subs < 50000:
+        # Subscribers must be between 10K and 50K
+        if subs > 50000:
+            return None
+        if subs < 10000:
             return None
 
-        # English filter
-        if not api_data:
-            def foreign_script_ratio(text):
-                if not text:
-                    return 0.0
-                letter_count = foreign_count = 0
-                for ch in text:
-                    cp = ord(ch)
-                    if cp < 128:
-                        if ch.isalpha(): letter_count += 1
-                        continue
-                    if (0x0600<=cp<=0x06FF or 0x0900<=cp<=0x097F or
-                        0x0980<=cp<=0x09FF or 0x4E00<=cp<=0x9FFF or
-                        0x3040<=cp<=0x30FF or 0xAC00<=cp<=0xD7AF or
-                        0x0400<=cp<=0x04FF or 0x0E00<=cp<=0x0E7F):
-                        foreign_count += 1; letter_count += 1
-                return foreign_count / letter_count if letter_count else 0.0
-            if foreign_script_ratio(name) > 0.25 or foreign_script_ratio(desc[:300]) > 0.40:
-                return None
+        # Videos must be less than 50
+        if vid_count >= 50:
+            return None
+
+        # Channel must be at least 4 months old (120 days)
+        if age_days is not None and age_days < 120:
+            return None
+
+        # Reject clearly foreign script channels
+        def foreign_script_ratio(text):
+            if not text: return 0.0
+            letter_count = foreign_count = 0
+            for ch in text:
+                cp = ord(ch)
+                if cp < 128:
+                    if ch.isalpha(): letter_count += 1
+                    continue
+                if (0x0600<=cp<=0x06FF or 0x0900<=cp<=0x097F or
+                    0x0980<=cp<=0x09FF or 0x4E00<=cp<=0x9FFF or
+                    0x3040<=cp<=0x30FF or 0xAC00<=cp<=0xD7AF or
+                    0x0400<=cp<=0x04FF or 0x0E00<=cp<=0x0E7F):
+                    foreign_count += 1; letter_count += 1
+            return foreign_count / letter_count if letter_count else 0.0
+        if foreign_script_ratio(name) > 0.25 or foreign_script_ratio(desc[:300]) > 0.40:
+            return None
 
         # ── FACELESS DETECTION — score only, no hard reject ──────────
         # We score faceless confidence but do NOT reject based on it
         # User manually reviews all channels in dashboard and decides
         try:
-            is_faceless, faceless_score, _ = detect_faceless_full(
-                real_cid, name, desc,
+            is_faceless, faceless_score = detect_faceless_full(
+                channel_name=name,
+                description=desc,
                 video_titles=video_titles,
-                run_layer2=True,
-                run_layer3=False,
             )
         except Exception:
             is_faceless, faceless_score = False, 0
@@ -1208,11 +1193,16 @@ def score_channel(channel, niche, conn=None):
             "channel_age_days":   age_days,
             "last_video_days":    last_video_days,
             "recent_views":       recent_views,
+            "description":        desc[:500] if desc else "",
+            "channel_handle":     channel.get("handle", ""),
             "date_found":         now.isoformat(),
             "review_status":      "pending",
         }
 
-    except Exception:
+    except Exception as e:
+        import traceback
+        print(f"  [ERR] score_channel failed: {e}")
+        traceback.print_exc()
         return None
 
 
@@ -1228,7 +1218,7 @@ def channel_exists(conn, channel_id):
 def save_channel(conn, ch):
     c = conn.cursor()
     c.execute('''INSERT OR REPLACE INTO channels VALUES
-        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
+        (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', (
         ch["channel_id"],
         ch["channel_name"],
         ch["channel_url"],
@@ -1245,6 +1235,9 @@ def save_channel(conn, ch):
         ch.get("last_video_days"),
         ch["date_found"],
         ch.get("review_status", "pending"),
+        ch.get("recent_views", 0),
+        ch.get("description", ""),
+        ch.get("channel_handle", ""),
     ))
     conn.commit()
 
@@ -1475,6 +1468,13 @@ def main():
 
     show_summary(conn)
     conn.close()
+
+    # ── Auto-sync to Supabase if configured ───────────────────────
+    try:
+        from supabase_sync import sync_to_supabase
+        sync_to_supabase(verbose=True)
+    except Exception as e:
+        print(f"  [SYNC] Cloud sync skipped: {e}")
 
 
 if __name__ == "__main__":
